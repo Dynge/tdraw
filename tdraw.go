@@ -39,11 +39,12 @@ written to stdout; redirect stdout to save it.
 Mouse:
   Left-drag       Draw a box, line, or erase an area in box/line/erase mode
   Right-click     Erase the character at the pointer outside text mode
+  Text mode       Left-click the canvas to choose where text starts
 
 Shortcuts:
   b               Switch to box mode from line or erase mode
   Esc             Finish text entry
-  t               Enter text mode at the pointer
+  t               Enter text mode; left-click to choose the insertion point
   l               Enter line mode
   e               Enter erase mode
   i               Enter text mode from line or erase mode
@@ -80,7 +81,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 }
 
 func drawHeader(s tcell.Screen, x, y int, mode string) {
-	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | b:box / Esc:end text / t:text / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | b:box / Esc:end text / t:text / left-click:select / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
 }
 
 func readInitialInput(input io.Reader) (string, error) {
@@ -99,6 +100,60 @@ type inputCanvas struct {
 	width, height int
 	x, y          int
 	lastX, lastY  int
+}
+
+type textEntry struct {
+	cursorSet    bool
+	cursorX      int
+	cursorY      int
+	startX       int
+	previewX     int
+	previewY     int
+	preview      canvasCell
+	previewStyle tcell.Style
+}
+
+func (e *textEntry) beginSelection(screen tcell.Screen, x, y int, style tcell.Style) {
+	e.restorePreview(screen)
+	e.cursorSet = false
+	e.previewX, e.previewY = -1, -1
+	e.movePreview(screen, x, y, style)
+}
+
+func (e *textEntry) movePreview(screen tcell.Screen, x, y int, style tcell.Style) {
+	e.restorePreview(screen)
+	width, height := screen.Size()
+	if x < 0 || x >= width || y < canvasTopRow || y >= height {
+		return
+	}
+
+	main, comb, currentStyle, _ := screen.GetContent(x, y)
+	e.preview = canvasCell{main: main, comb: append([]rune(nil), comb...)}
+	e.previewStyle = currentStyle
+	e.previewX, e.previewY = x, y
+	screen.SetContent(x, y, '+', nil, style)
+}
+
+func (e *textEntry) selectPosition(screen tcell.Screen, x, y int, cursorStyle tcell.Style) bool {
+	e.restorePreview(screen)
+	width, height := screen.Size()
+	if x < 0 || x >= width || y < canvasTopRow || y >= height {
+		return false
+	}
+
+	e.cursorSet = true
+	e.cursorX, e.cursorY = x, y
+	e.startX = x
+	screen.SetContent(e.cursorX, e.cursorY, '_', nil, cursorStyle)
+	return true
+}
+
+func (e *textEntry) restorePreview(screen tcell.Screen) {
+	if e.previewX < 0 || e.previewY < 0 {
+		return
+	}
+	screen.SetContent(e.previewX, e.previewY, e.preview.main, e.preview.comb, e.previewStyle)
+	e.previewX, e.previewY = -1, -1
 }
 
 type canvasCell struct {
@@ -465,8 +520,7 @@ func main() {
 	lchar := '*'
 
 	mode := MODE_BOX
-	imodeCurX, imodeCurY := 0, 0
-	imodeStartX, _ := 0, 0
+	text := textEntry{previewX: -1, previewY: -1}
 	// imodeLastC := ' '
 
 loop:
@@ -553,9 +607,7 @@ loop:
 					switch ev.Rune() {
 					case 't':
 						mode = MODE_TEXT
-						imodeCurX, imodeCurY = mx, my
-						imodeStartX, _ = mx, my
-						s.SetContent(imodeCurX, imodeCurY, '_', nil, st.Blink(true))
+						text.beginSelection(s, mx, my, st)
 					case 'e':
 						mode = MODE_ERASE
 					case 'l':
@@ -575,9 +627,7 @@ loop:
 						mode = MODE_LINE
 					case 't', 'i':
 						mode = MODE_TEXT
-						imodeCurX, imodeCurY = mx, my
-						imodeStartX, _ = mx, my
-						s.SetContent(imodeCurX, imodeCurY, '_', nil, st.Blink(true))
+						text.beginSelection(s, mx, my, st)
 					}
 				}
 
@@ -591,9 +641,7 @@ loop:
 						mode = MODE_ERASE
 					case 't', 'i':
 						mode = MODE_TEXT
-						imodeCurX, imodeCurY = mx, my
-						imodeStartX, _ = mx, my
-						s.SetContent(imodeCurX, imodeCurY, '_', nil, st.Blink(true))
+						text.beginSelection(s, mx, my, st)
 					}
 				}
 
@@ -601,24 +649,36 @@ loop:
 				switch ev.Key() {
 				case tcell.KeyEscape:
 					mode = MODE_BOX
-					s.SetContent(imodeCurX, imodeCurY, ' ', nil, st)
+					text.restorePreview(s)
+					if text.cursorSet {
+						s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
+					}
 					history.record(s)
 				case tcell.KeyEnter:
-					s.SetContent(imodeCurX, imodeCurY, ' ', nil, st)
-					imodeCurX = imodeStartX
-					imodeCurY = imodeCurY + 1
+					if !text.cursorSet {
+						continue
+					}
+					s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
+					text.cursorX = text.startX
+					text.cursorY++
 				case tcell.KeyDEL:
-					if imodeCurX > imodeStartX {
-						s.SetContent(imodeCurX, imodeCurY, ' ', nil, st)
-						s.SetContent(imodeCurX-1, imodeCurY, '_', nil, st.Blink(true))
-						imodeCurX -= 1
+					if !text.cursorSet {
+						continue
+					}
+					if text.cursorX > text.startX {
+						s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
+						s.SetContent(text.cursorX-1, text.cursorY, '_', nil, st.Blink(true))
+						text.cursorX--
 					} else {
-						s.SetContent(imodeCurX, imodeCurY, '_', nil, st)
+						s.SetContent(text.cursorX, text.cursorY, '_', nil, st)
 					}
 				default:
-					s.SetContent(imodeCurX, imodeCurY, ev.Rune(), nil, st)
-					imodeCurX += runewidth.RuneWidth(ev.Rune())
-					s.SetContent(imodeCurX, imodeCurY, '_', nil, st.Blink(true))
+					if !text.cursorSet {
+						continue
+					}
+					s.SetContent(text.cursorX, text.cursorY, ev.Rune(), nil, st)
+					text.cursorX += runewidth.RuneWidth(ev.Rune())
+					s.SetContent(text.cursorX, text.cursorY, '_', nil, st.Blink(true))
 				}
 			}
 		case *tcell.EventMouse:
@@ -626,7 +686,7 @@ loop:
 			mx, my = x, y
 			button := ev.Buttons()
 
-			if button != tcell.ButtonNone && ox < 0 {
+			if mode != MODE_TEXT && button != tcell.ButtonNone && ox < 0 {
 				ox, oy = x, y
 			}
 
@@ -701,6 +761,14 @@ loop:
 					bx, by = -1, -1
 					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
 					history.record(s)
+				}
+			case MODE_TEXT:
+				if !text.cursorSet {
+					if ev.Buttons() == tcell.Button1 {
+						text.selectPosition(s, x, y, st.Blink(true))
+					} else {
+						text.movePreview(s, x, y, st)
+					}
 				}
 			}
 

@@ -9,17 +9,18 @@ import (
 )
 
 const (
-	testCanvasWidth   = 12
-	testCanvasHeight  = 5
-	testCanvasRow     = canvasTopRow
-	testClipWidth     = 4
-	testClipHeight    = 4
-	testHeaderWidth   = 80
-	testLastColumn    = testClipWidth - 1
-	testNextCanvasRow = testCanvasRow + 1
-	testLineOrigin     = 1
-	testEqualLineDelta = 4
-	testOneCellDelta   = 1
+	testCanvasWidth         = 12
+	testCanvasHeight        = 5
+	testCanvasRow           = canvasTopRow
+	testClipWidth           = 4
+	testClipHeight          = 4
+	testHeaderWidth         = 80
+	testLastColumn          = testClipWidth - 1
+	testNextCanvasRow       = testCanvasRow + 1
+	testPreviewColumn       = 2
+	testLineOrigin          = 1
+	testEqualLineDelta      = 4
+	testOneCellDelta        = 1
 	testHorizontalLineDelta = 10
 )
 
@@ -56,6 +57,7 @@ func TestPrintHelpIfRequested(t *testing.T) {
 		"Undo / redo",
 		"b               Switch to box mode from line or erase mode",
 		"Esc             Finish text entry",
+		"Left-click the canvas to choose where text starts",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output does not contain %q", want)
@@ -171,6 +173,39 @@ func TestCanvasHistoryIsBounded(t *testing.T) {
 
 	if got, want := len(history.snapshots), maxHistoryEntries+1; got != want {
 		t.Fatalf("history entries = %d, want %d", got, want)
+	}
+}
+
+func TestTextEntryPreviewFollowsPointerAndRestoresCanvas(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	screen.SetContent(1, testCanvasRow, 'x', nil, tcell.StyleDefault)
+	entry := textEntry{previewX: -1, previewY: -1}
+
+	entry.beginSelection(screen, 1, testCanvasRow, tcell.StyleDefault)
+	assertScreenRune(t, screen, 1, testCanvasRow, '+')
+
+	entry.movePreview(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault)
+	assertScreenRune(t, screen, 1, testCanvasRow, 'x')
+	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '+')
+
+	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault.Blink(true)) {
+		t.Fatal("selectPosition rejected a canvas position")
+	}
+	if !entry.cursorSet {
+		t.Fatal("selectPosition did not activate the text cursor")
+	}
+	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '_')
+}
+
+func TestTextEntryCannotSelectHeaderPosition(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	entry := textEntry{previewX: -1, previewY: -1}
+
+	if entry.selectPosition(screen, 1, 0, tcell.StyleDefault) {
+		t.Fatal("selectPosition accepted a header position")
+	}
+	if entry.cursorSet {
+		t.Fatal("text cursor became active after an invalid selection")
 	}
 }
 
