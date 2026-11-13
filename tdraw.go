@@ -26,6 +26,31 @@ const (
 	verticalCellWeight   = 3
 )
 
+type lineArrowMode uint8
+
+const (
+	lineArrowheadsOn lineArrowMode = iota
+	lineArrowheadsOff
+)
+
+type screenPoint struct {
+	x, y int
+}
+
+type headerState struct {
+	pointer     screenPoint
+	mode        string
+	text        textEntry
+	lineArrows  lineArrowMode
+}
+
+func (mode lineArrowMode) toggled() lineArrowMode {
+	if mode == lineArrowheadsOn {
+		return lineArrowheadsOff
+	}
+	return lineArrowheadsOn
+}
+
 const helpText = `tdraw - draw text-based diagrams in your terminal
 
 Usage:
@@ -46,6 +71,7 @@ Shortcuts:
   Esc             Finish text entry
   t               Enter text mode; left-click to choose the insertion point
   l               Enter line mode
+  a               Toggle arrowheads in line mode
   e               Enter erase mode
   i               Enter text mode from line or erase mode
   u / r           Undo / redo (outside text mode)
@@ -80,7 +106,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	}
 }
 
-func drawHeader(s tcell.Screen, x, y int, mode string, text textEntry) {
+func drawHeader(s tcell.Screen, state headerState) {
 	width, _ := s.Size()
 	for row := 0; row < canvasTopRow; row++ {
 		for col := 0; col < width; col++ {
@@ -88,8 +114,8 @@ func drawHeader(s tcell.Screen, x, y int, mode string, text textEntry) {
 		}
 	}
 
-	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | %s | %s", x, y, mode, modeSelectionHint(mode), globalHint(mode)))
-	emitStr(s, 1, 1, defStyle, contextualHint(mode, text))
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | %s | %s", state.pointer.x, state.pointer.y, state.mode, modeSelectionHint(state.mode), globalHint(state.mode)))
+	emitStr(s, 1, 1, defStyle, contextualHint(state.mode, state.text, state.lineArrows))
 }
 
 func modeSelectionHint(mode string) string {
@@ -113,12 +139,16 @@ func globalHint(mode string) string {
 	return "u:undo / r:redo / Ctrl+C/D:save"
 }
 
-func contextualHint(mode string, text textEntry) string {
+func contextualHint(mode string, text textEntry, lineArrows lineArrowMode) string {
 	switch mode {
 	case MODE_BOX:
 		return "Left-drag: draw box / Right-click: erase character"
 	case MODE_LINE:
-		return "Left-drag: draw line / Right-click: erase character"
+		arrowState := "off"
+		if lineArrows == lineArrowheadsOn {
+			arrowState = "on"
+		}
+		return fmt.Sprintf("Left-drag: draw line / a: arrows %s / Right-click: erase character", arrowState)
 	case MODE_ERASE:
 		return "Left-drag: erase area / Right-click: erase character"
 	case MODE_TEXT:
@@ -430,63 +460,80 @@ func (c *inputCanvas) drawCombiningRune(r rune) {
 	c.screen.SetContent(c.lastX, c.lastY, mainc, append(combc, r), style)
 }
 
-func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
+func drawLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
 	// do not draw point
-	if x1 == x2 && y1 == y2 {
+	if start == end {
 		return
 	}
 
-	dx := x2 - x1
+	dx := end.x - start.x
 	if dx < 0 {
 		dx = -dx
 	}
-	dy := y2 - y1
+	dy := end.y - start.y
 	if dy < 0 {
 		dy = -dy
 	}
 	if dx >= verticalCellWeight*dy {
-		y2 = y1
+		end.y = start.y
 	} else {
-		x2 = x1
+		end.x = start.x
 	}
 
 	cross := false
-	if c, _, _, _ := s.GetContent(x1, y1); c != ' ' {
+	if c, _, _, _ := s.GetContent(start.x, start.y); c != ' ' {
 		cross = true
 	}
 
-	if x1 == x2 {
-		if y1 < y2 {
-			for row := y1; row <= y2; row++ {
-				s.SetContent(x1, row, '|', nil, tcell.StyleDefault)
-			}
-			s.SetContent(x1, y2, 'v', nil, tcell.StyleDefault)
-
-		} else {
-			for row := y2; row <= y1; row++ {
-				s.SetContent(x1, row, '|', nil, tcell.StyleDefault)
-			}
-			s.SetContent(x1, y2, '^', nil, tcell.StyleDefault)
-		}
-	} else if y1 == y2 {
-		if x1 < x2 {
-			for col := x1; col <= x2; col++ {
-				s.SetContent(col, y1, '-', nil, tcell.StyleDefault)
-			}
-			s.SetContent(x2, y1, '>', nil, tcell.StyleDefault)
-		} else {
-			for col := x2; col <= x1; col++ {
-				s.SetContent(col, y1, '-', nil, tcell.StyleDefault)
-			}
-			s.SetContent(x2, y1, '<', nil, tcell.StyleDefault)
-		}
+	if start.x == end.x {
+		drawVerticalLine(s, start, end, arrowMode)
+	} else {
+		drawHorizontalLine(s, start, end, arrowMode)
 	}
 
 	if cross {
-		s.SetContent(x1, y1, '+', nil, tcell.StyleDefault)
+		s.SetContent(start.x, start.y, '+', nil, tcell.StyleDefault)
+	}
+}
+
+func drawVerticalLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
+	lineEnd := '|'
+	if arrowMode == lineArrowheadsOn {
+		if start.y < end.y {
+			lineEnd = 'v'
+		} else {
+			lineEnd = '^'
+		}
 	}
 
-	return
+	firstRow, lastRow := start.y, end.y
+	if lastRow < firstRow {
+		firstRow, lastRow = lastRow, firstRow
+	}
+	for row := firstRow; row <= lastRow; row++ {
+		s.SetContent(start.x, row, '|', nil, tcell.StyleDefault)
+	}
+	s.SetContent(end.x, end.y, lineEnd, nil, tcell.StyleDefault)
+}
+
+func drawHorizontalLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
+	lineEnd := '-'
+	if arrowMode == lineArrowheadsOn {
+		if start.x < end.x {
+			lineEnd = '>'
+		} else {
+			lineEnd = '<'
+		}
+	}
+
+	firstColumn, lastColumn := start.x, end.x
+	if lastColumn < firstColumn {
+		firstColumn, lastColumn = lastColumn, firstColumn
+	}
+	for col := firstColumn; col <= lastColumn; col++ {
+		s.SetContent(col, start.y, '-', nil, tcell.StyleDefault)
+	}
+	s.SetContent(end.x, end.y, lineEnd, nil, tcell.StyleDefault)
 }
 
 func drawErase(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
@@ -619,13 +666,19 @@ func main() {
 	lchar := '*'
 
 	mode := MODE_BOX
+	lineArrows := lineArrowheadsOn
 	text := textEntry{previewX: -1, previewY: -1}
 	// imodeLastC := ' '
 
 loop:
 	for {
 		// r, _, _, _ := s.GetContent(mx, my)
-		drawHeader(s, mx, my, mode, text)
+		drawHeader(s, headerState{
+			pointer:    screenPoint{x: mx, y: my},
+			mode:       mode,
+			text:       text,
+			lineArrows: lineArrows,
+		})
 
 		s.Show()
 		ev := s.PollEvent()
@@ -741,6 +794,8 @@ loop:
 					case 't', 'i':
 						mode = MODE_TEXT
 						text.beginSelection(s, mx, my, st)
+					case 'a':
+						lineArrows = lineArrows.toggled()
 					}
 				}
 
@@ -832,8 +887,7 @@ loop:
 				switch ev.Buttons() {
 				case tcell.ButtonNone:
 					if ox >= 0 {
-						bg := tcell.Color((lchar - '0') * 2)
-						drawLine(s, ox, oy, x, y, up.Background(bg), lchar)
+						drawLine(s, screenPoint{x: ox, y: oy}, screenPoint{x: x, y: y}, lineArrows)
 						history.record(s)
 						ox, oy = -1, -1
 						bx, by = -1, -1

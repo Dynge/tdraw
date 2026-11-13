@@ -29,7 +29,8 @@ size is clipped, and piped input is limited to 1 MiB.
 // tdraw has 4 mode.
 b: Box(+Undirected line, default)
 ESC: End text entry
-l: Directed line
+l: Line
+a: Toggle line arrowheads (on by default)
 t: Text
 e: Erase
 u: Undo the last completed drawing, erase, or text-entry session
