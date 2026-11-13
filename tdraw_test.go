@@ -15,6 +15,8 @@ const (
 	testClipWidth           = 4
 	testClipHeight          = 4
 	testHeaderWidth         = 80
+	testHeaderPointerX      = 3
+	testHeaderPointerY      = 4
 	testLastColumn          = testClipWidth - 1
 	testNextCanvasRow       = testCanvasRow + 1
 	testPreviewColumn       = 2
@@ -210,6 +212,87 @@ func TestTextEntryCannotSelectHeaderPosition(t *testing.T) {
 	}
 }
 
+func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
+	tests := []struct {
+		name           string
+		mode           string
+		textCursorSet  bool
+		wantGlobal     string
+		wantContext    string
+		unwantedGlobal string
+	}{
+		{
+			name:           "box mode",
+			mode:           MODE_BOX,
+			wantGlobal:     "l:line / t:text / e:erase",
+			wantContext:    "Left-drag: draw box",
+			unwantedGlobal: "b:box",
+		},
+		{
+			name:           "line mode",
+			mode:           MODE_LINE,
+			wantGlobal:     "b:box / t:text / e:erase",
+			wantContext:    "Left-drag: draw line",
+		},
+		{
+			name:           "erase mode",
+			mode:           MODE_ERASE,
+			wantGlobal:     "b:box / l:line / t:text",
+			wantContext:    "Left-drag: erase area",
+		},
+		{
+			name:           "text selection",
+			mode:           MODE_TEXT,
+			wantGlobal:     "Esc:box",
+			wantContext:    "Left-click to select text position",
+			unwantedGlobal: "u:undo",
+		},
+		{
+			name:          "text entry",
+			mode:          MODE_TEXT,
+			textCursorSet: true,
+			wantGlobal:    "Esc:box",
+			wantContext:   "Esc: exit text mode",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			screen := newTestCanvas(t, testHeaderWidth, testCanvasHeight)
+			drawHeader(screen, testHeaderPointerX, testHeaderPointerY, test.mode, textEntry{cursorSet: test.textCursorSet})
+
+			global := screenLine(screen, 0)
+			if !strings.Contains(global, test.wantGlobal) {
+				t.Errorf("global header = %q, want it to contain %q", global, test.wantGlobal)
+			}
+			if test.unwantedGlobal != "" && strings.Contains(global, test.unwantedGlobal) {
+				t.Errorf("global header = %q, should not contain %q", global, test.unwantedGlobal)
+			}
+
+			context := screenLine(screen, 1)
+			if !strings.Contains(context, test.wantContext) {
+				t.Errorf("context header = %q, want it to contain %q", context, test.wantContext)
+			}
+		})
+	}
+}
+
+func TestDrawHeaderClearsPreviousHints(t *testing.T) {
+	screen := newTestCanvas(t, testHeaderWidth, testCanvasHeight)
+	drawHeader(screen, testHeaderPointerX, testHeaderPointerY, MODE_ERASE, textEntry{})
+	drawHeader(screen, testHeaderPointerX, testHeaderPointerY, MODE_BOX, textEntry{})
+
+	global := screenLine(screen, 0)
+	if strings.Contains(global, "b:box") {
+		t.Errorf("global header retained an old mode hint: %q", global)
+	}
+
+	context := screenLine(screen, 1)
+	if strings.Contains(context, "erase area") {
+		t.Errorf("context header retained an old mode hint: %q", context)
+	}
+}
+
 func TestTextEntryBackspaceAtEmptyLineStartReturnsToPreviousLine(t *testing.T) {
 	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
 	entry := textEntry{previewX: -1, previewY: -1}
@@ -275,6 +358,16 @@ func assertScreenRune(t *testing.T, screen tcell.Screen, x, y int, want rune) {
 	if got != want {
 		t.Errorf("screen content at (%d,%d) = %q, want %q", x, y, got, want)
 	}
+}
+
+func screenLine(screen tcell.Screen, row int) string {
+	width, _ := screen.Size()
+	var line strings.Builder
+	for col := 0; col < width; col++ {
+		main, _, _, _ := screen.GetContent(col, row)
+		line.WriteRune(main)
+	}
+	return strings.TrimRight(line.String(), " ")
 }
 
 func TestDrawLineFollowsDominantAxis(t *testing.T) {

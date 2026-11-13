@@ -80,8 +80,54 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	}
 }
 
-func drawHeader(s tcell.Screen, x, y int, mode string) {
-	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | b:box / Esc:end text / t:text / left-click:select / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
+func drawHeader(s tcell.Screen, x, y int, mode string, text textEntry) {
+	width, _ := s.Size()
+	for row := 0; row < canvasTopRow; row++ {
+		for col := 0; col < width; col++ {
+			s.SetContent(col, row, ' ', nil, defStyle)
+		}
+	}
+
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | %s | %s", x, y, mode, modeSelectionHint(mode), globalHint(mode)))
+	emitStr(s, 1, 1, defStyle, contextualHint(mode, text))
+}
+
+func modeSelectionHint(mode string) string {
+	switch mode {
+	case MODE_BOX:
+		return "l:line / t:text / e:erase"
+	case MODE_LINE:
+		return "b:box / t:text / e:erase"
+	case MODE_ERASE:
+		return "b:box / l:line / t:text"
+	case MODE_TEXT:
+		return "Esc:box"
+	}
+	return ""
+}
+
+func globalHint(mode string) string {
+	if mode == MODE_TEXT {
+		return "Ctrl+C/D:save"
+	}
+	return "u:undo / r:redo / Ctrl+C/D:save"
+}
+
+func contextualHint(mode string, text textEntry) string {
+	switch mode {
+	case MODE_BOX:
+		return "Left-drag: draw box / Right-click: erase character"
+	case MODE_LINE:
+		return "Left-drag: draw line / Right-click: erase character"
+	case MODE_ERASE:
+		return "Left-drag: erase area / Right-click: erase character"
+	case MODE_TEXT:
+		if text.cursorSet {
+			return "Esc: exit text mode / Enter: new line / Backspace: delete"
+		}
+		return "Left-click to select text position"
+	}
+	return ""
 }
 
 func readInitialInput(input io.Reader) (string, error) {
@@ -579,7 +625,7 @@ func main() {
 loop:
 	for {
 		// r, _, _, _ := s.GetContent(mx, my)
-		drawHeader(s, mx, my, mode)
+		drawHeader(s, mx, my, mode, text)
 
 		s.Show()
 		ev := s.PollEvent()
