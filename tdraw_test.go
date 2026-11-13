@@ -93,6 +93,70 @@ func TestDrawInputClipsToCanvas(t *testing.T) {
 	}
 }
 
+func TestCanvasHistoryUndoAndRedo(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	screen.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
+	history := newCanvasHistory(screen)
+
+	screen.SetContent(1, testCanvasRow, 'b', nil, tcell.StyleDefault)
+	history.record(screen)
+
+	history.undo(screen)
+	assertScreenRune(t, screen, 1, testCanvasRow, 'a')
+
+	history.redo(screen)
+	assertScreenRune(t, screen, 1, testCanvasRow, 'b')
+}
+
+func TestCanvasHistoryNewActionClearsRedo(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	history := newCanvasHistory(screen)
+
+	screen.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
+	history.record(screen)
+	history.undo(screen)
+
+	screen.SetContent(2, testCanvasRow, 'b', nil, tcell.StyleDefault)
+	history.record(screen)
+	history.redo(screen)
+
+	assertScreenRune(t, screen, 1, testCanvasRow, ' ')
+	assertScreenRune(t, screen, 2, testCanvasRow, 'b')
+}
+
+func TestCanvasHistoryIsBounded(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	history := newCanvasHistory(screen)
+
+	for i := 0; i < maxHistoryEntries+1; i++ {
+		screen.SetContent(0, testCanvasRow, rune('a'+i%26), nil, tcell.StyleDefault)
+		history.record(screen)
+	}
+
+	if got, want := len(history.snapshots), maxHistoryEntries+1; got != want {
+		t.Fatalf("history entries = %d, want %d", got, want)
+	}
+}
+
+func newTestCanvas(t *testing.T, width, height int) tcell.Screen {
+	t.Helper()
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen.Init returned an error: %v", err)
+	}
+	screen.SetSize(width, height)
+	t.Cleanup(screen.Fini)
+	return screen
+}
+
+func assertScreenRune(t *testing.T, screen tcell.Screen, x, y int, want rune) {
+	t.Helper()
+	got, _, _, _ := screen.GetContent(x, y)
+	if got != want {
+		t.Errorf("screen content at (%d,%d) = %q, want %q", x, y, got, want)
+	}
+}
+
 func TestDrawLineFollowsDominantAxis(t *testing.T) {
 	tests := []struct {
 		name           string

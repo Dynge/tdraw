@@ -20,6 +20,7 @@ const (
 	MODE_ERASE = "ERASE"
 
 	maxInitialInputBytes = 1 << 20
+	maxHistoryEntries    = 100
 	canvasTopRow         = 2
 	tabWidth             = 8
 	verticalCellWeight   = 3
@@ -42,7 +43,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 }
 
 func drawHeader(s tcell.Screen, x, y int, mode string) {
-	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | Esc:box / t:text / l:line / e:erase / Ctrl+C:quit/save", x, y, mode))
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | Esc:box / t:text / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
 }
 
 func readInitialInput(input io.Reader) (string, error) {
@@ -61,6 +62,114 @@ type inputCanvas struct {
 	width, height int
 	x, y          int
 	lastX, lastY  int
+}
+
+type canvasCell struct {
+	main rune
+	comb []rune
+}
+
+type canvasSnapshot struct {
+	width, height int
+	cells         []canvasCell
+}
+
+type canvasHistory struct {
+	snapshots []canvasSnapshot
+	current   int
+}
+
+func newCanvasHistory(screen tcell.Screen) *canvasHistory {
+	return &canvasHistory{
+		snapshots: []canvasSnapshot{captureCanvas(screen)},
+	}
+}
+
+func captureCanvas(screen tcell.Screen) canvasSnapshot {
+	width, screenHeight := screen.Size()
+	height := screenHeight - canvasTopRow
+	if height < 0 {
+		height = 0
+	}
+	snapshot := canvasSnapshot{
+		width:  width,
+		height: height,
+		cells:  make([]canvasCell, width*height),
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			main, comb, _, _ := screen.GetContent(x, y+canvasTopRow)
+			snapshot.cells[y*width+x] = canvasCell{
+				main: main,
+				comb: append([]rune(nil), comb...),
+			}
+		}
+	}
+	return snapshot
+}
+
+func (h *canvasHistory) record(screen tcell.Screen) {
+	snapshot := captureCanvas(screen)
+	if canvasSnapshotsEqual(h.snapshots[h.current], snapshot) {
+		return
+	}
+
+	h.snapshots = h.snapshots[:h.current+1]
+	h.snapshots = append(h.snapshots, snapshot)
+	if len(h.snapshots) > maxHistoryEntries+1 {
+		h.snapshots = h.snapshots[1:]
+	}
+	h.current = len(h.snapshots) - 1
+}
+
+func canvasSnapshotsEqual(left, right canvasSnapshot) bool {
+	if left.width != right.width || left.height != right.height {
+		return false
+	}
+	for i := range left.cells {
+		if left.cells[i].main != right.cells[i].main || len(left.cells[i].comb) != len(right.cells[i].comb) {
+			return false
+		}
+		for j := range left.cells[i].comb {
+			if left.cells[i].comb[j] != right.cells[i].comb[j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (h *canvasHistory) undo(screen tcell.Screen) {
+	if h.current == 0 {
+		return
+	}
+	h.current--
+	restoreCanvas(screen, h.snapshots[h.current])
+}
+
+func (h *canvasHistory) redo(screen tcell.Screen) {
+	if h.current >= len(h.snapshots)-1 {
+		return
+	}
+	h.current++
+	restoreCanvas(screen, h.snapshots[h.current])
+}
+
+func restoreCanvas(screen tcell.Screen, snapshot canvasSnapshot) {
+	width, screenHeight := screen.Size()
+	height := screenHeight - canvasTopRow
+	if height < 0 {
+		height = 0
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			cell := canvasCell{main: ' '}
+			if x < snapshot.width && y < snapshot.height {
+				cell = snapshot.cells[y*snapshot.width+x]
+			}
+			screen.SetContent(x, y+canvasTopRow, cell.main, cell.comb, tcell.StyleDefault)
+		}
+	}
 }
 
 func drawInput(s tcell.Screen, input string) {
@@ -305,6 +414,7 @@ func main() {
 	s.EnableMouse()
 	s.Clear()
 	drawInput(s, initialInput)
+	history := newCanvasHistory(s)
 
 	// mouse
 	mx, my := -1, -1
@@ -382,6 +492,19 @@ loop:
 				break loop
 			}
 
+			if mode != MODE_TEXT && ev.Key() == tcell.KeyRune {
+				switch ev.Rune() {
+				case 'u':
+					history.undo(s)
+					ox, oy, bx, by = -1, -1, -1, -1
+					continue
+				case 'r':
+					history.redo(s)
+					ox, oy, bx, by = -1, -1, -1, -1
+					continue
+				}
+			}
+
 			switch mode {
 			case MODE_BOX:
 				switch ev.Key() {
@@ -438,6 +561,7 @@ loop:
 				case tcell.KeyEscape:
 					mode = MODE_BOX
 					s.SetContent(imodeCurX, imodeCurY, ' ', nil, st)
+					history.record(s)
 				case tcell.KeyEnter:
 					s.SetContent(imodeCurX, imodeCurY, ' ', nil, st)
 					imodeCurX = imodeStartX
@@ -473,6 +597,7 @@ loop:
 					if ox >= 0 {
 						bg := tcell.Color((lchar - '0') * 2)
 						drawErase(s, ox, oy, x, y, up.Background(bg), lchar)
+						history.record(s)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
@@ -487,6 +612,7 @@ loop:
 					ox, oy = -1, -1
 					bx, by = -1, -1
 					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(s)
 				}
 
 			case MODE_BOX:
@@ -495,6 +621,7 @@ loop:
 					if ox >= 0 {
 						bg := tcell.Color((lchar - '0') * 2)
 						drawBox(s, ox, oy, x, y, up.Background(bg), lchar)
+						history.record(s)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
@@ -509,6 +636,7 @@ loop:
 					ox, oy = -1, -1
 					bx, by = -1, -1
 					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(s)
 				}
 			case MODE_LINE:
 				switch ev.Buttons() {
@@ -516,6 +644,7 @@ loop:
 					if ox >= 0 {
 						bg := tcell.Color((lchar - '0') * 2)
 						drawLine(s, ox, oy, x, y, up.Background(bg), lchar)
+						history.record(s)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
@@ -530,6 +659,7 @@ loop:
 					ox, oy = -1, -1
 					bx, by = -1, -1
 					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(s)
 				}
 			}
 

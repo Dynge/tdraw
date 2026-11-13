@@ -31,6 +31,8 @@ ESC: Box(+Undirected line, default)
 l: Directed line
 t: Text
 e: Erase
+u: Undo the last completed drawing, erase, or text-entry session
+r: Redo
 
 CTRL-C/CTRL-D: exit
 
