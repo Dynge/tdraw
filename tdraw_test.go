@@ -69,9 +69,11 @@ func TestPrintHelpIfRequested(t *testing.T) {
 		"Left-drag",
 		"Right-click",
 		"Ctrl+C / Ctrl+D",
-		"Undo / redo",
+		"Undo / redo (outside text and freehand modes)",
 		"b               Switch to box mode from line or erase mode",
 		"a               Toggle arrowheads in line mode",
+		"f               Enter freehand mode",
+		"Left-click or drag to draw with the selected ASCII character",
 		"Esc             Finish text entry",
 		"Left-click the canvas to choose where text starts",
 		"Backspace       Delete a character or join with the previous line",
@@ -216,6 +218,49 @@ func TestTextEntryCannotSelectHeaderPosition(t *testing.T) {
 	}
 }
 
+func TestFreehandEntrySelectsPrintableASCIICharacters(t *testing.T) {
+	entry := newFreehandEntry()
+	if got, want := entry.character, '*'; got != want {
+		t.Fatalf("initial freehand character = %q, want %q", got, want)
+	}
+
+	for character := rune(' '); character <= '~'; character++ {
+		if !entry.selectCharacter(character) {
+			t.Fatalf("selectCharacter rejected printable ASCII %q", character)
+		}
+		if got := entry.character; got != character {
+			t.Errorf("selected character = %q, want %q", got, character)
+		}
+	}
+
+	for _, character := range []rune{'\n', '\x7f', '界'} {
+		if entry.selectCharacter(character) {
+			t.Errorf("selectCharacter accepted non-printable ASCII character %q", character)
+		}
+		if got, want := entry.character, '~'; got != want {
+			t.Errorf("character after rejected selection = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestFreehandEntryDrawsSelectedCharacterOnCanvas(t *testing.T) {
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	entry := newFreehandEntry()
+	entry.selectCharacter('#')
+
+	if !entry.draw(canvas, testSecondColumn, testCanvasRow, tcell.StyleDefault) {
+		t.Fatal("draw rejected a canvas position")
+	}
+	assertScreenRune(t, canvas, testSecondColumn, testCanvasRow, '#')
+
+	if entry.draw(canvas, testSecondColumn, canvasTopRow-1, tcell.StyleDefault) {
+		t.Fatal("draw accepted a header position")
+	}
+	if entry.draw(canvas, testCanvasWidth, testCanvasRow, tcell.StyleDefault) {
+		t.Fatal("draw accepted a position beyond the canvas width")
+	}
+}
+
 func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -229,7 +274,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 		{
 			name:           "box mode",
 			mode:           MODE_BOX,
-			wantGlobal:     "l:line / t:text / e:erase",
+			wantGlobal:     "l:line / t:text / e:erase / f:freehand",
 			wantContext:    "Left-drag: draw box",
 			unwantedGlobal: "b:box",
 		},
@@ -237,7 +282,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 			name:        "line mode",
 			mode:        MODE_LINE,
 			lineArrows:  lineArrowheadsOn,
-			wantGlobal:  "b:box / t:text / e:erase",
+			wantGlobal:  "b:box / t:text / e:erase / f:freehand",
 			wantContext: "a: arrows on",
 		},
 		{
@@ -250,7 +295,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 		{
 			name:        "erase mode",
 			mode:        MODE_ERASE,
-			wantGlobal:  "b:box / l:line / t:text",
+			wantGlobal:  "b:box / l:line / t:text / f:freehand",
 			wantContext: "Left-drag: erase area",
 		},
 		{
@@ -267,6 +312,12 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 			wantGlobal:    "Esc:box",
 			wantContext:   "Esc: exit text mode",
 		},
+		{
+			name:        "freehand",
+			mode:        MODE_FREEHAND,
+			wantGlobal:  "Esc:box",
+			wantContext: "Character: '*' / Type ASCII to change",
+		},
 	}
 
 	for _, test := range tests {
@@ -276,6 +327,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 				pointer:    screenPoint{x: testHeaderPointerX, y: testHeaderPointerY},
 				mode:       test.mode,
 				text:       textEntry{cursorSet: test.textCursorSet},
+				freehand:   newFreehandEntry(),
 				lineArrows: test.lineArrows,
 			})
 

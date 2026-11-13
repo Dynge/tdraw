@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	MODE_BOX   = "BOX"
-	MODE_LINE  = "LINE"
-	MODE_TEXT  = "TEXT"
-	MODE_ERASE = "ERASE"
+	MODE_BOX      = "BOX"
+	MODE_LINE     = "LINE"
+	MODE_TEXT     = "TEXT"
+	MODE_ERASE    = "ERASE"
+	MODE_FREEHAND = "FREEHAND"
 
 	maxInitialInputBytes = 1 << 20
 	maxHistoryEntries    = 100
@@ -41,6 +42,7 @@ type headerState struct {
 	pointer    screenPoint
 	mode       string
 	text       textEntry
+	freehand   freehandEntry
 	lineArrows lineArrowMode
 }
 
@@ -65,6 +67,7 @@ Mouse:
   Left-drag       Draw a box, line, or erase an area in box/line/erase mode
   Right-click     Erase the character at the pointer outside text mode
   Text mode       Left-click the canvas to choose where text starts
+  Freehand mode   Left-click or drag to draw with the selected ASCII character
   Wheel           Scroll the canvas
   Shift+wheel     Scroll horizontally
 
@@ -75,8 +78,9 @@ Shortcuts:
   l               Enter line mode
   a               Toggle arrowheads in line mode
   e               Enter erase mode
+  f               Enter freehand mode; type a printable ASCII character to select it
   i               Enter text mode from line or erase mode
-  u / r           Undo / redo (outside text mode)
+  u / r           Undo / redo (outside text and freehand modes)
   Enter           Start a new line in text mode
   Backspace       Delete a character or join with the previous line
   Ctrl+C / Ctrl+D Save the drawing to stdout and exit
@@ -117,7 +121,7 @@ func drawHeader(s tcell.Screen, state headerState) {
 	}
 
 	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | %s | %s", state.pointer.x, state.pointer.y, state.mode, modeSelectionHint(state.mode), globalHint(state.mode)))
-	emitStr(s, 1, 1, defStyle, contextualHint(state.mode, state.text, state.lineArrows))
+	emitStr(s, 1, 1, defStyle, contextualHint(state.mode, state.text, state.freehand, state.lineArrows))
 	for col := 0; col < width; col++ {
 		s.SetContent(col, canvasTopRow-1, tcell.RuneHLine, nil, defStyle)
 	}
@@ -126,25 +130,27 @@ func drawHeader(s tcell.Screen, state headerState) {
 func modeSelectionHint(mode string) string {
 	switch mode {
 	case MODE_BOX:
-		return "l:line / t:text / e:erase"
+		return "l:line / t:text / e:erase / f:freehand"
 	case MODE_LINE:
-		return "b:box / t:text / e:erase"
+		return "b:box / t:text / e:erase / f:freehand"
 	case MODE_ERASE:
-		return "b:box / l:line / t:text"
+		return "b:box / l:line / t:text / f:freehand"
 	case MODE_TEXT:
+		return "Esc:box"
+	case MODE_FREEHAND:
 		return "Esc:box"
 	}
 	return ""
 }
 
 func globalHint(mode string) string {
-	if mode == MODE_TEXT {
+	if mode == MODE_TEXT || mode == MODE_FREEHAND {
 		return "Ctrl+C/D:save"
 	}
 	return "u:undo / r:redo / Ctrl+C/D:save"
 }
 
-func contextualHint(mode string, text textEntry, lineArrows lineArrowMode) string {
+func contextualHint(mode string, text textEntry, freehand freehandEntry, lineArrows lineArrowMode) string {
 	switch mode {
 	case MODE_BOX:
 		return "Left-drag: draw box / Right-click: erase character"
@@ -161,6 +167,8 @@ func contextualHint(mode string, text textEntry, lineArrows lineArrowMode) strin
 			return "Esc: exit text mode / Enter: new line / Backspace: delete"
 		}
 		return "Left-click to select text position"
+	case MODE_FREEHAND:
+		return fmt.Sprintf("Character: %q / Type ASCII to change / Left-click or drag: draw", freehand.character)
 	}
 	return ""
 }
@@ -187,6 +195,31 @@ type textEntry struct {
 	previewY     int
 	preview      canvasCell
 	previewStyle tcell.Style
+}
+
+type freehandEntry struct {
+	character rune
+}
+
+func newFreehandEntry() freehandEntry {
+	return freehandEntry{character: '*'}
+}
+
+func (e *freehandEntry) selectCharacter(character rune) bool {
+	if character < ' ' || character > '~' {
+		return false
+	}
+	e.character = character
+	return true
+}
+
+func (e *freehandEntry) draw(canvas *canvasBuffer, x, y int, style tcell.Style) bool {
+	width, height := canvas.Size()
+	if x < 0 || x >= width || y < canvasTopRow || y >= height {
+		return false
+	}
+	canvas.SetContent(x, y, e.character, nil, style)
+	return true
 }
 
 func (e *textEntry) beginSelection(canvas *canvasBuffer, x, y int, style tcell.Style) {
@@ -336,6 +369,7 @@ func main() {
 	mode := MODE_BOX
 	lineArrows := lineArrowheadsOn
 	text := textEntry{previewX: -1, previewY: -1}
+	freehand := newFreehandEntry()
 	// imodeLastC := ' '
 
 loop:
@@ -345,10 +379,11 @@ loop:
 			pointer:    screenPoint{x: mx, y: my},
 			mode:       mode,
 			text:       text,
+			freehand:   freehand,
 			lineArrows: lineArrows,
 		})
 		viewport.render(s)
-		if ox >= 0 && oy >= 0 && bx >= 0 && by >= 0 {
+		if mode != MODE_FREEHAND && ox >= 0 && oy >= 0 && bx >= 0 && by >= 0 {
 			viewport.drawSelection(s, screenPoint{x: ox, y: oy}, screenPoint{x: bx, y: by})
 		}
 
@@ -407,7 +442,7 @@ loop:
 				break loop
 			}
 
-			if mode != MODE_TEXT && ev.Key() == tcell.KeyRune {
+			if mode != MODE_TEXT && mode != MODE_FREEHAND && ev.Key() == tcell.KeyRune {
 				switch ev.Rune() {
 				case 'u':
 					history.undo(canvas)
@@ -432,6 +467,8 @@ loop:
 						mode = MODE_ERASE
 					case 'l':
 						mode = MODE_LINE
+					case 'f':
+						mode = MODE_FREEHAND
 					}
 				}
 
@@ -448,6 +485,8 @@ loop:
 					case 't', 'i':
 						mode = MODE_TEXT
 						text.beginSelection(canvas, mx, my, st)
+					case 'f':
+						mode = MODE_FREEHAND
 					}
 				}
 
@@ -464,6 +503,8 @@ loop:
 						text.beginSelection(canvas, mx, my, st)
 					case 'a':
 						lineArrows = lineArrows.toggled()
+					case 'f':
+						mode = MODE_FREEHAND
 					}
 				}
 
@@ -491,6 +532,14 @@ loop:
 						continue
 					}
 					text.insertRune(canvas, ev.Rune(), st)
+				}
+			case MODE_FREEHAND:
+				if ev.Key() == tcell.KeyEscape {
+					history.record(canvas)
+					ox, oy, bx, by = -1, -1, -1, -1
+					mode = MODE_BOX
+				} else if ev.Key() == tcell.KeyRune {
+					freehand.selectCharacter(ev.Rune())
 				}
 			}
 		case *tcell.EventMouse:
@@ -560,6 +609,23 @@ loop:
 						bx, by = -1, -1
 					}
 				case tcell.Button1:
+					bx, by = x, y
+				case tcell.Button3:
+					ox, oy = -1, -1
+					bx, by = -1, -1
+					canvas.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(canvas)
+				}
+			case MODE_FREEHAND:
+				switch ev.Buttons() {
+				case tcell.ButtonNone:
+					if ox >= 0 {
+						history.record(canvas)
+						ox, oy = -1, -1
+						bx, by = -1, -1
+					}
+				case tcell.Button1:
+					freehand.draw(canvas, x, y, st)
 					bx, by = x, y
 				case tcell.Button3:
 					ox, oy = -1, -1
