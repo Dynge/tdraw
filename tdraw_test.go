@@ -14,6 +14,7 @@ const (
 	testCanvasRow     = canvasTopRow
 	testClipWidth     = 4
 	testClipHeight    = 4
+	testHeaderWidth   = 80
 	testLastColumn    = testClipWidth - 1
 	testNextCanvasRow = testCanvasRow + 1
 )

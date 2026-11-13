@@ -40,6 +40,10 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	}
 }
 
+func drawHeader(s tcell.Screen, x, y int, mode string) {
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | Esc:box / t:text / l:line / e:erase / Ctrl+C:quit/save", x, y, mode))
+}
+
 func readInitialInput(input io.Reader) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(input, maxInitialInputBytes+1))
 	if err != nil {
@@ -302,7 +306,7 @@ func main() {
 loop:
 	for {
 		// r, _, _, _ := s.GetContent(mx, my)
-		emitStr(s, 1, 1, defStyle, fmt.Sprintf("[%3v,%3v] %-7s | esc:box / t:text / l:line / e:erase / MouseR: eraser", mx, my, mode))
+		drawHeader(s, mx, my, mode)
 
 		s.Show()
 		ev := s.PollEvent()
