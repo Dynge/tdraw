@@ -27,7 +27,8 @@ size is clipped, and piped input is limited to 1 MiB.
 
 ```
 // tdraw has 4 mode.
-ESC: Box(+Undirected line, default)
+b: Box(+Undirected line, default)
+ESC: End text entry
 l: Directed line
 t: Text
 e: Erase

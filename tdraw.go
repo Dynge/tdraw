@@ -43,7 +43,7 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 }
 
 func drawHeader(s tcell.Screen, x, y int, mode string) {
-	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | Esc:box / t:text / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
+	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | b:box / Esc:end text / t:text / l:line / e:erase / u:undo / r:redo / Ctrl+C:quit/save", x, y, mode))
 }
 
 func readInitialInput(input io.Reader) (string, error) {
@@ -524,10 +524,10 @@ loop:
 
 			case MODE_ERASE:
 				switch ev.Key() {
-				case tcell.KeyEscape:
-					mode = MODE_BOX
 				default:
 					switch ev.Rune() {
+					case 'b':
+						mode = MODE_BOX
 					case 'e':
 						mode = MODE_ERASE
 					case 'l':
@@ -542,10 +542,10 @@ loop:
 
 			case MODE_LINE:
 				switch ev.Key() {
-				case tcell.KeyEscape:
-					mode = MODE_BOX
 				default:
 					switch ev.Rune() {
+					case 'b':
+						mode = MODE_BOX
 					case 'e':
 						mode = MODE_ERASE
 					case 't', 'i':
