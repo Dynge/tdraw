@@ -26,7 +26,44 @@ const (
 	verticalCellWeight   = 3
 )
 
+const helpText = `tdraw - draw text-based diagrams in your terminal
+
+Usage:
+  tdraw [--help]
+  tdraw > draw.txt
+  some-command | tdraw > draw.txt
+
+Piped text is placed at the top of the canvas. When you finish, the drawing is
+written to stdout; redirect stdout to save it.
+
+Mouse:
+  Left-drag       Draw a box, line, or erase an area in box/line/erase mode
+  Right-click     Erase the character at the pointer outside text mode
+
+Shortcuts:
+  b               Switch to box mode from line or erase mode
+  Esc             Finish text entry
+  t               Enter text mode at the pointer
+  l               Enter line mode
+  e               Enter erase mode
+  i               Enter text mode from line or erase mode
+  u / r           Undo / redo (outside text mode)
+  Enter           Start a new line in text mode
+  Backspace       Delete the previous character in text mode
+  Ctrl+C / Ctrl+D Save the drawing to stdout and exit
+`
+
 var defStyle tcell.Style
+
+func printHelpIfRequested(args []string, output io.Writer) bool {
+	for _, arg := range args {
+		if arg == "--help" {
+			fmt.Fprint(output, helpText)
+			return true
+		}
+	}
+	return false
+}
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	for _, c := range str {
@@ -379,6 +416,10 @@ func drawSelect(s tcell.Screen, x1, y1, x2, y2 int, sel bool) {
 }
 
 func main() {
+	if printHelpIfRequested(os.Args[1:], os.Stdout) {
+		return
+	}
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetOutput(os.Stdout)
 

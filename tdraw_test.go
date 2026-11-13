@@ -41,6 +41,42 @@ func TestReadInitialInputRejectsOversizedInput(t *testing.T) {
 	}
 }
 
+func TestPrintHelpIfRequested(t *testing.T) {
+	var output strings.Builder
+	if !printHelpIfRequested([]string{"--help"}, &output) {
+		t.Fatal("printHelpIfRequested did not recognize --help")
+	}
+
+	for _, want := range []string{
+		"Usage:",
+		"some-command | tdraw > draw.txt",
+		"Left-drag",
+		"Right-click",
+		"Ctrl+C / Ctrl+D",
+		"Undo / redo",
+		"b               Switch to box mode from line or erase mode",
+		"Esc             Finish text entry",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("help output does not contain %q", want)
+		}
+	}
+
+	if strings.Contains(output.String(), "Esc             Return to box mode") {
+		t.Error("help output still describes Escape as the box-mode shortcut")
+	}
+}
+
+func TestPrintHelpIfNotRequested(t *testing.T) {
+	var output strings.Builder
+	if printHelpIfRequested([]string{"--other"}, &output) {
+		t.Fatal("printHelpIfRequested recognized an unrelated argument")
+	}
+	if output.Len() != 0 {
+		t.Errorf("help output = %q, want empty output", output.String())
+	}
+}
+
 func TestDrawInputPlacesTextOnCanvas(t *testing.T) {
 	screen := tcell.NewSimulationScreen("")
 	if err := screen.Init(); err != nil {
