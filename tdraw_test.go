@@ -17,6 +17,10 @@ const (
 	testHeaderWidth   = 80
 	testLastColumn    = testClipWidth - 1
 	testNextCanvasRow = testCanvasRow + 1
+	testLineOrigin     = 1
+	testEqualLineDelta = 4
+	testOneCellDelta   = 1
+	testHorizontalLineDelta = 10
 )
 
 func TestReadInitialInputFromPipe(t *testing.T) {
@@ -86,5 +90,123 @@ func TestDrawInputClipsToCanvas(t *testing.T) {
 		if got != cell.want {
 			t.Errorf("screen content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
 		}
+	}
+}
+
+func TestDrawLineFollowsDominantAxis(t *testing.T) {
+	tests := []struct {
+		name           string
+		x1, y1, x2, y2 int
+		start          rune
+		endX, endY     int
+		end            rune
+		unsnappedX     int
+		unsnappedY     int
+	}{
+		{
+			name:       "horizontal movement is larger",
+			x1:         testLineOrigin,
+			y1:         testLineOrigin,
+			x2:         testLineOrigin + testHorizontalLineDelta,
+			y2:         testLineOrigin + verticalCellWeight,
+			start:      '-',
+			endX:       testLineOrigin + testHorizontalLineDelta,
+			endY:       testLineOrigin,
+			end:        '>',
+			unsnappedX: testLineOrigin + testHorizontalLineDelta,
+			unsnappedY: testLineOrigin + verticalCellWeight,
+		},
+		{
+			name:       "vertical movement is larger",
+			x1:         2,
+			y1:         1,
+			x2:         5,
+			y2:         8,
+			start:      '|',
+			endX:       2,
+			endY:       8,
+			end:        'v',
+			unsnappedX: 5,
+			unsnappedY: 8,
+		},
+		{
+			name:       "vertical movement is larger in reverse",
+			x1:         5,
+			y1:         8,
+			x2:         2,
+			y2:         1,
+			start:      '|',
+			endX:       5,
+			endY:       1,
+			end:        '^',
+			unsnappedX: 2,
+			unsnappedY: 1,
+		},
+		{
+			name:       "equal cell movement weighs vertical three times",
+			x1:         testLineOrigin,
+			y1:         testLineOrigin,
+			x2:         testLineOrigin + testEqualLineDelta,
+			y2:         testLineOrigin + testEqualLineDelta,
+			start:      '|',
+			endX:       testLineOrigin,
+			endY:       testLineOrigin + testEqualLineDelta,
+			end:        'v',
+			unsnappedX: testLineOrigin + testEqualLineDelta,
+			unsnappedY: testLineOrigin + testEqualLineDelta,
+		},
+		{
+			name:       "three horizontal cells equal one vertical cell",
+			x1:         testLineOrigin,
+			y1:         testLineOrigin,
+			x2:         testLineOrigin + verticalCellWeight,
+			y2:         testLineOrigin + testOneCellDelta,
+			start:      '-',
+			endX:       testLineOrigin + verticalCellWeight,
+			endY:       testLineOrigin,
+			end:        '>',
+			unsnappedX: testLineOrigin + verticalCellWeight,
+			unsnappedY: testLineOrigin + testOneCellDelta,
+		},
+		{
+			name:       "vertical weighting wins below three horizontal cells",
+			x1:         testLineOrigin,
+			y1:         testLineOrigin,
+			x2:         testLineOrigin + verticalCellWeight - testOneCellDelta,
+			y2:         testLineOrigin + testOneCellDelta,
+			start:      '|',
+			endX:       testLineOrigin,
+			endY:       testLineOrigin + testOneCellDelta,
+			end:        'v',
+			unsnappedX: testLineOrigin + verticalCellWeight - testOneCellDelta,
+			unsnappedY: testLineOrigin + testOneCellDelta,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			screen := tcell.NewSimulationScreen("")
+			if err := screen.Init(); err != nil {
+				t.Fatalf("screen.Init returned an error: %v", err)
+			}
+			defer screen.Fini()
+			screen.SetSize(testCanvasWidth, testCanvasHeight+5)
+
+			drawLine(screen, test.x1, test.y1, test.x2, test.y2, tcell.StyleDefault, '*')
+
+			for _, cell := range []struct {
+				x, y int
+				want rune
+			}{
+				{x: test.x1, y: test.y1, want: test.start},
+				{x: test.endX, y: test.endY, want: test.end},
+				{x: test.unsnappedX, y: test.unsnappedY, want: ' '},
+			} {
+				got, _, _, _ := screen.GetContent(cell.x, cell.y)
+				if got != cell.want {
+					t.Errorf("screen content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
+				}
+			}
+		})
 	}
 }

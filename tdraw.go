@@ -22,6 +22,7 @@ const (
 	maxInitialInputBytes = 1 << 20
 	canvasTopRow         = 2
 	tabWidth             = 8
+	verticalCellWeight   = 3
 )
 
 var defStyle tcell.Style
@@ -133,6 +134,20 @@ func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
 	// do not draw point
 	if x1 == x2 && y1 == y2 {
 		return
+	}
+
+	dx := x2 - x1
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := y2 - y1
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx >= verticalCellWeight*dy {
+		y2 = y1
+	} else {
+		x2 = x1
 	}
 
 	cross := false
