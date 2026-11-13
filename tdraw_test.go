@@ -58,6 +58,7 @@ func TestPrintHelpIfRequested(t *testing.T) {
 		"b               Switch to box mode from line or erase mode",
 		"Esc             Finish text entry",
 		"Left-click the canvas to choose where text starts",
+		"Backspace       Delete a character or join with the previous line",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output does not contain %q", want)
@@ -207,6 +208,54 @@ func TestTextEntryCannotSelectHeaderPosition(t *testing.T) {
 	if entry.cursorSet {
 		t.Fatal("text cursor became active after an invalid selection")
 	}
+}
+
+func TestTextEntryBackspaceAtEmptyLineStartReturnsToPreviousLine(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	entry := textEntry{previewX: -1, previewY: -1}
+	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
+		t.Fatal("selectPosition rejected a canvas position")
+	}
+
+	entry.insertRune(screen, 'a', tcell.StyleDefault)
+	entry.startNewLine(screen, tcell.StyleDefault)
+	entry.insertRune(screen, 'b', tcell.StyleDefault)
+	entry.insertRune(screen, 'c', tcell.StyleDefault)
+	entry.backspace(screen, tcell.StyleDefault)
+	entry.backspace(screen, tcell.StyleDefault)
+	entry.backspace(screen, tcell.StyleDefault)
+
+	if got, want := entry.cursorX, testPreviewColumn+testOneCellDelta; got != want {
+		t.Errorf("cursorX after deleting newline = %d, want %d", got, want)
+	}
+	if got, want := entry.cursorY, testCanvasRow; got != want {
+		t.Errorf("cursorY after deleting newline = %d, want %d", got, want)
+	}
+	if got, want := len(entry.lineEnds), 1; got != want {
+		t.Errorf("tracked line ends = %d, want %d", got, want)
+	}
+	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, 'a')
+	assertScreenRune(t, screen, testPreviewColumn+testOneCellDelta, testCanvasRow, '_')
+	assertScreenRune(t, screen, testPreviewColumn, testNextCanvasRow, ' ')
+	assertScreenRune(t, screen, testPreviewColumn+testOneCellDelta, testNextCanvasRow, ' ')
+}
+
+func TestTextEntryBackspaceDoesNotCrossInitialLineStart(t *testing.T) {
+	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	entry := textEntry{previewX: -1, previewY: -1}
+	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
+		t.Fatal("selectPosition rejected a canvas position")
+	}
+
+	entry.backspace(screen, tcell.StyleDefault)
+
+	if got, want := entry.cursorX, testPreviewColumn; got != want {
+		t.Errorf("cursorX at initial line start = %d, want %d", got, want)
+	}
+	if got, want := entry.cursorY, testCanvasRow; got != want {
+		t.Errorf("cursorY at initial line start = %d, want %d", got, want)
+	}
+	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '_')
 }
 
 func newTestCanvas(t *testing.T, width, height int) tcell.Screen {

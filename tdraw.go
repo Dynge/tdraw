@@ -50,7 +50,7 @@ Shortcuts:
   i               Enter text mode from line or erase mode
   u / r           Undo / redo (outside text mode)
   Enter           Start a new line in text mode
-  Backspace       Delete the previous character in text mode
+  Backspace       Delete a character or join with the previous line
   Ctrl+C / Ctrl+D Save the drawing to stdout and exit
 `
 
@@ -107,6 +107,8 @@ type textEntry struct {
 	cursorX      int
 	cursorY      int
 	startX       int
+	startY       int
+	lineEnds     []int
 	previewX     int
 	previewY     int
 	preview      canvasCell
@@ -144,8 +146,59 @@ func (e *textEntry) selectPosition(screen tcell.Screen, x, y int, cursorStyle tc
 	e.cursorSet = true
 	e.cursorX, e.cursorY = x, y
 	e.startX = x
+	e.startY = y
+	e.lineEnds = []int{x}
 	screen.SetContent(e.cursorX, e.cursorY, '_', nil, cursorStyle)
 	return true
+}
+
+func (e *textEntry) insertRune(screen tcell.Screen, r rune, style tcell.Style) {
+	if !e.cursorSet {
+		return
+	}
+	screen.SetContent(e.cursorX, e.cursorY, r, nil, style)
+	e.cursorX += runewidth.RuneWidth(r)
+	e.lineEnds[e.currentLine()] = e.cursorX
+	screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+}
+
+func (e *textEntry) startNewLine(screen tcell.Screen, style tcell.Style) {
+	if !e.cursorSet {
+		return
+	}
+	screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+	e.lineEnds = append(e.lineEnds, e.startX)
+	e.cursorX = e.startX
+	e.cursorY++
+}
+
+func (e *textEntry) backspace(screen tcell.Screen, style tcell.Style) {
+	if !e.cursorSet {
+		return
+	}
+	if e.cursorX > e.startX {
+		screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+		e.cursorX--
+		e.lineEnds[e.currentLine()] = e.cursorX
+		screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+		return
+	}
+
+	line := e.currentLine()
+	if line == 0 {
+		screen.SetContent(e.cursorX, e.cursorY, '_', nil, style)
+		return
+	}
+
+	screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+	e.cursorY--
+	e.cursorX = e.lineEnds[line-1]
+	e.lineEnds = e.lineEnds[:line]
+	screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+}
+
+func (e *textEntry) currentLine() int {
+	return e.cursorY - e.startY
 }
 
 func (e *textEntry) restorePreview(screen tcell.Screen) {
@@ -658,27 +711,17 @@ loop:
 					if !text.cursorSet {
 						continue
 					}
-					s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
-					text.cursorX = text.startX
-					text.cursorY++
+					text.startNewLine(s, st)
 				case tcell.KeyDEL:
 					if !text.cursorSet {
 						continue
 					}
-					if text.cursorX > text.startX {
-						s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
-						s.SetContent(text.cursorX-1, text.cursorY, '_', nil, st.Blink(true))
-						text.cursorX--
-					} else {
-						s.SetContent(text.cursorX, text.cursorY, '_', nil, st)
-					}
+					text.backspace(s, st)
 				default:
 					if !text.cursorSet {
 						continue
 					}
-					s.SetContent(text.cursorX, text.cursorY, ev.Rune(), nil, st)
-					text.cursorX += runewidth.RuneWidth(ev.Rune())
-					s.SetContent(text.cursorX, text.cursorY, '_', nil, st.Blink(true))
+					text.insertRune(s, ev.Rune(), st)
 				}
 			}
 		case *tcell.EventMouse:
