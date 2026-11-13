@@ -16,6 +16,15 @@ or download from https://github.com/aca/tdraw/releases
 tdraw > draw.txt
 ```
 
+You can also pipe text into `tdraw` to prefill the canvas:
+
+```
+some-command | tdraw > draw.txt
+```
+
+The input is placed at the top of the drawing area. Text beyond the terminal
+size is clipped, and piped input is limited to 1 MiB.
+
 ```
 // tdraw has 4 mode.
 ESC: Box(+Undirected line, default)

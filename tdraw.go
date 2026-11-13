@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -17,6 +18,10 @@ const (
 	MODE_LINE  = "LINE"
 	MODE_TEXT  = "TEXT"
 	MODE_ERASE = "ERASE"
+
+	maxInitialInputBytes = 1 << 20
+	canvasTopRow         = 2
+	tabWidth             = 8
 )
 
 var defStyle tcell.Style
@@ -33,6 +38,91 @@ func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 		s.SetContent(x, y, c, comb, style)
 		x += w
 	}
+}
+
+func readInitialInput(input io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(input, maxInitialInputBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxInitialInputBytes {
+		return "", fmt.Errorf("initial input exceeds %d bytes", maxInitialInputBytes)
+	}
+	return string(data), nil
+}
+
+type inputCanvas struct {
+	screen        tcell.Screen
+	width, height int
+	x, y          int
+	lastX, lastY  int
+}
+
+func drawInput(s tcell.Screen, input string) {
+	width, height := s.Size()
+	canvas := inputCanvas{
+		screen: s,
+		width:  width,
+		height: height,
+		y:      canvasTopRow,
+		lastX:  -1,
+		lastY:  -1,
+	}
+	for _, r := range input {
+		canvas.drawRune(r)
+	}
+}
+
+func (c *inputCanvas) drawRune(r rune) {
+	switch r {
+	case '\n':
+		c.x = 0
+		c.y++
+		c.lastX, c.lastY = -1, -1
+		return
+	case '\r':
+		return
+	case '\t':
+		c.drawSpaces(tabWidth - c.x%tabWidth)
+		return
+	}
+
+	runeWidth := runewidth.RuneWidth(r)
+	if runeWidth < 0 {
+		return
+	}
+	if runeWidth == 0 {
+		c.drawCombiningRune(r)
+		return
+	}
+	if c.x+runeWidth > c.width {
+		c.x = c.width
+		return
+	}
+
+	if c.y < c.height {
+		c.screen.SetContent(c.x, c.y, r, nil, tcell.StyleDefault)
+		c.lastX, c.lastY = c.x, c.y
+	}
+	c.x += runeWidth
+}
+
+func (c *inputCanvas) drawSpaces(count int) {
+	for i := 0; i < count; i++ {
+		if c.x < c.width && c.y < c.height {
+			c.screen.SetContent(c.x, c.y, ' ', nil, tcell.StyleDefault)
+			c.lastX, c.lastY = c.x, c.y
+		}
+		c.x++
+	}
+}
+
+func (c *inputCanvas) drawCombiningRune(r rune) {
+	if c.lastX < 0 || c.lastY < 0 {
+		return
+	}
+	mainc, combc, style, _ := c.screen.GetContent(c.lastX, c.lastY)
+	c.screen.SetContent(c.lastX, c.lastY, mainc, append(combc, r), style)
 }
 
 func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
@@ -164,6 +254,20 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetOutput(os.Stdout)
 
+	stdinInfo, e := os.Stdin.Stat()
+	if e != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", e)
+		os.Exit(1)
+	}
+	initialInput := ""
+	if stdinInfo.Mode()&os.ModeCharDevice == 0 {
+		initialInput, e = readInitialInput(os.Stdin)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", e)
+			os.Exit(1)
+		}
+	}
+
 	encoding.Register()
 
 	s, e := tcell.NewScreen()
@@ -181,6 +285,7 @@ func main() {
 
 	s.EnableMouse()
 	s.Clear()
+	drawInput(s, initialInput)
 
 	// mouse
 	mx, my := -1, -1
