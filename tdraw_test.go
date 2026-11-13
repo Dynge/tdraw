@@ -13,22 +13,30 @@ const (
 	testCanvasHeight        = 5
 	testCanvasRow           = canvasTopRow
 	testClipWidth           = 4
-	testClipHeight          = 4
+	testClipHeight          = 5
 	testHeaderWidth         = 80
 	testHeaderPointerX      = 3
 	testHeaderPointerY      = 4
 	testLastColumn          = testClipWidth - 1
 	testNextCanvasRow       = testCanvasRow + 1
 	testPreviewColumn       = 2
+	testSecondColumn        = 2
+	testViewportWidth       = 4
+	testViewportHeight      = 5
+	testViewportPointerX    = 1
+	testViewportPointerY    = 2
+	testWideRuneCellWidth   = 2
+	testAlphabetLength      = 26
 	testLineOrigin          = 1
+	testLineRow             = canvasTopRow + 1
 	testEqualLineDelta      = 4
 	testOneCellDelta        = 1
 	testHorizontalLineDelta = 10
 	testVerticalStartX      = 2
-	testVerticalStartY      = 1
+	testVerticalStartY      = canvasTopRow + 1
 	testVerticalEndX        = 5
-	testVerticalEndY        = 8
-	testLineExtraHeight     = 5
+	testVerticalEndY        = canvasTopRow + 8
+	testLineExtraHeight     = 8
 )
 
 func TestReadInitialInputFromPipe(t *testing.T) {
@@ -89,14 +97,9 @@ func TestPrintHelpIfNotRequested(t *testing.T) {
 }
 
 func TestDrawInputPlacesTextOnCanvas(t *testing.T) {
-	screen := tcell.NewSimulationScreen("")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen.Init returned an error: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(testCanvasWidth, testCanvasHeight)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
 
-	drawInput(screen, "ab\tc\r\nxy")
+	drawInput(canvas, "ab\tc\r\nxy")
 
 	for _, cell := range []struct {
 		x, y int
@@ -108,22 +111,17 @@ func TestDrawInputPlacesTextOnCanvas(t *testing.T) {
 		{x: 0, y: testNextCanvasRow, want: 'x'},
 		{x: 1, y: testNextCanvasRow, want: 'y'},
 	} {
-		got, _, _, _ := screen.GetContent(cell.x, cell.y)
+		got, _, _, _ := canvas.GetContent(cell.x, cell.y)
 		if got != cell.want {
-			t.Errorf("screen content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
+			t.Errorf("canvas content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
 		}
 	}
 }
 
 func TestDrawInputClipsToCanvas(t *testing.T) {
-	screen := tcell.NewSimulationScreen("")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen.Init returned an error: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(testClipWidth, testClipHeight)
+	canvas := newTestCanvas(t, testClipWidth, testClipHeight)
 
-	drawInput(screen, "abcdef\n123456\noutside")
+	drawInput(canvas, "abcdef\n123456\noutside")
 
 	for _, cell := range []struct {
 		x, y int
@@ -133,51 +131,51 @@ func TestDrawInputClipsToCanvas(t *testing.T) {
 		{x: 0, y: testNextCanvasRow, want: '1'},
 		{x: testLastColumn, y: testNextCanvasRow, want: '4'},
 	} {
-		got, _, _, _ := screen.GetContent(cell.x, cell.y)
+		got, _, _, _ := canvas.GetContent(cell.x, cell.y)
 		if got != cell.want {
-			t.Errorf("screen content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
+			t.Errorf("canvas content at (%d,%d) = %q, want %q", cell.x, cell.y, got, cell.want)
 		}
 	}
 }
 
 func TestCanvasHistoryUndoAndRedo(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
-	screen.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
-	history := newCanvasHistory(screen)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
+	history := newCanvasHistory(canvas)
 
-	screen.SetContent(1, testCanvasRow, 'b', nil, tcell.StyleDefault)
-	history.record(screen)
+	canvas.SetContent(1, testCanvasRow, 'b', nil, tcell.StyleDefault)
+	history.record(canvas)
 
-	history.undo(screen)
-	assertScreenRune(t, screen, 1, testCanvasRow, 'a')
+	history.undo(canvas)
+	assertScreenRune(t, canvas, 1, testCanvasRow, 'a')
 
-	history.redo(screen)
-	assertScreenRune(t, screen, 1, testCanvasRow, 'b')
+	history.redo(canvas)
+	assertScreenRune(t, canvas, 1, testCanvasRow, 'b')
 }
 
 func TestCanvasHistoryNewActionClearsRedo(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
-	history := newCanvasHistory(screen)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	history := newCanvasHistory(canvas)
 
-	screen.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
-	history.record(screen)
-	history.undo(screen)
+	canvas.SetContent(1, testCanvasRow, 'a', nil, tcell.StyleDefault)
+	history.record(canvas)
+	history.undo(canvas)
 
-	screen.SetContent(2, testCanvasRow, 'b', nil, tcell.StyleDefault)
-	history.record(screen)
-	history.redo(screen)
+	canvas.SetContent(testSecondColumn, testCanvasRow, 'b', nil, tcell.StyleDefault)
+	history.record(canvas)
+	history.redo(canvas)
 
-	assertScreenRune(t, screen, 1, testCanvasRow, ' ')
-	assertScreenRune(t, screen, 2, testCanvasRow, 'b')
+	assertScreenRune(t, canvas, 1, testCanvasRow, ' ')
+	assertScreenRune(t, canvas, testSecondColumn, testCanvasRow, 'b')
 }
 
 func TestCanvasHistoryIsBounded(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
-	history := newCanvasHistory(screen)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	history := newCanvasHistory(canvas)
 
 	for i := 0; i < maxHistoryEntries+1; i++ {
-		screen.SetContent(0, testCanvasRow, rune('a'+i%26), nil, tcell.StyleDefault)
-		history.record(screen)
+		canvas.SetContent(0, testCanvasRow, rune('a'+i%testAlphabetLength), nil, tcell.StyleDefault)
+		history.record(canvas)
 	}
 
 	if got, want := len(history.snapshots), maxHistoryEntries+1; got != want {
@@ -186,31 +184,31 @@ func TestCanvasHistoryIsBounded(t *testing.T) {
 }
 
 func TestTextEntryPreviewFollowsPointerAndRestoresCanvas(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
-	screen.SetContent(1, testCanvasRow, 'x', nil, tcell.StyleDefault)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas.SetContent(1, testCanvasRow, 'x', nil, tcell.StyleDefault)
 	entry := textEntry{previewX: -1, previewY: -1}
 
-	entry.beginSelection(screen, 1, testCanvasRow, tcell.StyleDefault)
-	assertScreenRune(t, screen, 1, testCanvasRow, '+')
+	entry.beginSelection(canvas, 1, testCanvasRow, tcell.StyleDefault)
+	assertScreenRune(t, canvas, 1, testCanvasRow, '+')
 
-	entry.movePreview(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault)
-	assertScreenRune(t, screen, 1, testCanvasRow, 'x')
-	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '+')
+	entry.movePreview(canvas, testPreviewColumn, testCanvasRow, tcell.StyleDefault)
+	assertScreenRune(t, canvas, 1, testCanvasRow, 'x')
+	assertScreenRune(t, canvas, testPreviewColumn, testCanvasRow, '+')
 
-	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault.Blink(true)) {
+	if !entry.selectPosition(canvas, testPreviewColumn, testCanvasRow, tcell.StyleDefault.Blink(true)) {
 		t.Fatal("selectPosition rejected a canvas position")
 	}
 	if !entry.cursorSet {
 		t.Fatal("selectPosition did not activate the text cursor")
 	}
-	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '_')
+	assertScreenRune(t, canvas, testPreviewColumn, testCanvasRow, '_')
 }
 
 func TestTextEntryCannotSelectHeaderPosition(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
 	entry := textEntry{previewX: -1, previewY: -1}
 
-	if entry.selectPosition(screen, 1, 0, tcell.StyleDefault) {
+	if entry.selectPosition(canvas, 1, 0, tcell.StyleDefault) {
 		t.Fatal("selectPosition accepted a header position")
 	}
 	if entry.cursorSet {
@@ -236,24 +234,24 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 			unwantedGlobal: "b:box",
 		},
 		{
-			name:           "line mode",
-			mode:           MODE_LINE,
-			lineArrows:     lineArrowheadsOn,
-			wantGlobal:     "b:box / t:text / e:erase",
-			wantContext:    "a: arrows on",
+			name:        "line mode",
+			mode:        MODE_LINE,
+			lineArrows:  lineArrowheadsOn,
+			wantGlobal:  "b:box / t:text / e:erase",
+			wantContext: "a: arrows on",
 		},
 		{
-			name:           "line mode without arrowheads",
-			mode:           MODE_LINE,
-			lineArrows:     lineArrowheadsOff,
-			wantGlobal:     "b:box / t:text / e:erase",
-			wantContext:    "a: arrows off",
+			name:        "line mode without arrowheads",
+			mode:        MODE_LINE,
+			lineArrows:  lineArrowheadsOff,
+			wantGlobal:  "b:box / t:text / e:erase",
+			wantContext: "a: arrows off",
 		},
 		{
-			name:           "erase mode",
-			mode:           MODE_ERASE,
-			wantGlobal:     "b:box / l:line / t:text",
-			wantContext:    "Left-drag: erase area",
+			name:        "erase mode",
+			mode:        MODE_ERASE,
+			wantGlobal:  "b:box / l:line / t:text",
+			wantContext: "Left-drag: erase area",
 		},
 		{
 			name:           "text selection",
@@ -273,7 +271,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			screen := newTestCanvas(t, testHeaderWidth, testCanvasHeight)
+			screen := newTestScreen(t, testHeaderWidth, testCanvasHeight)
 			drawHeader(screen, headerState{
 				pointer:    screenPoint{x: testHeaderPointerX, y: testHeaderPointerY},
 				mode:       test.mode,
@@ -298,7 +296,7 @@ func TestDrawHeaderShowsModeAndContextHints(t *testing.T) {
 }
 
 func TestDrawHeaderClearsPreviousHints(t *testing.T) {
-	screen := newTestCanvas(t, testHeaderWidth, testCanvasHeight)
+	screen := newTestScreen(t, testHeaderWidth, testCanvasHeight)
 	drawHeader(screen, headerState{pointer: screenPoint{x: testHeaderPointerX, y: testHeaderPointerY}, mode: MODE_ERASE})
 	drawHeader(screen, headerState{pointer: screenPoint{x: testHeaderPointerX, y: testHeaderPointerY}, mode: MODE_BOX})
 
@@ -313,20 +311,105 @@ func TestDrawHeaderClearsPreviousHints(t *testing.T) {
 	}
 }
 
+func TestCanvasViewportScrollsAndRendersBackingCanvas(t *testing.T) {
+	canvas := newTestCanvas(t, testHeaderWidth, testCanvasHeight)
+	canvas.SetContent(testSecondColumn, testCanvasRow, 'a', nil, tcell.StyleDefault)
+	viewport := newCanvasViewport(canvas, testHeaderWidth, testCanvasHeight)
+
+	if !viewport.scroll(tcell.WheelDown, 0) {
+		t.Fatal("vertical wheel did not scroll the canvas")
+	}
+	if got, want := viewport.offset.y, canvasScrollStep; got != want {
+		t.Errorf("vertical offset = %d, want %d", got, want)
+	}
+	point, ok := viewport.toCanvas(testSecondColumn, canvasTopRow)
+	if !ok {
+		t.Fatal("canvas viewport rejected its first canvas row")
+	}
+	if got, want := point.y, canvasTopRow+canvasScrollStep; got != want {
+		t.Errorf("translated canvas row = %d, want %d", got, want)
+	}
+
+	screen := newTestScreen(t, testHeaderWidth, testCanvasHeight)
+	drawHeader(screen, headerState{pointer: screenPoint{x: testViewportPointerX, y: testViewportPointerY}, mode: MODE_BOX})
+	viewport.render(screen)
+
+	assertScreenRune(t, screen, testSecondColumn, canvasTopRow, ' ')
+	canvas.SetContent(testSecondColumn, canvasTopRow+canvasScrollStep, 'b', nil, tcell.StyleDefault)
+	viewport.render(screen)
+	assertScreenRune(t, screen, testSecondColumn, canvasTopRow, 'b')
+	assertScreenRune(t, screen, 0, canvasTopRow-1, tcell.RuneHLine)
+	if !strings.Contains(screenLine(screen, 0), "l:line / t:text / e:erase") {
+		t.Errorf("header changed during canvas scrolling: %q", screenLine(screen, 0))
+	}
+
+	if !viewport.scroll(tcell.WheelUp, 0) {
+		t.Fatal("wheel up did not return the canvas viewport")
+	}
+	if got := viewport.offset.y; got != 0 {
+		t.Errorf("vertical offset after returning = %d, want 0", got)
+	}
+}
+
+func TestCanvasViewportShiftWheelScrollsHorizontally(t *testing.T) {
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	viewport := newCanvasViewport(canvas, testViewportWidth, testViewportHeight)
+
+	if !viewport.scroll(tcell.WheelDown, tcell.ModShift) {
+		t.Fatal("Shift+wheel did not scroll horizontally")
+	}
+	if got, want := viewport.offset.x, canvasScrollStep; got != want {
+		t.Errorf("horizontal offset = %d, want %d", got, want)
+	}
+	if got := viewport.offset.y; got != 0 {
+		t.Errorf("vertical offset after Shift+wheel = %d, want 0", got)
+	}
+
+	if !viewport.scroll(tcell.WheelUp, tcell.ModShift) {
+		t.Fatal("Shift+wheel up did not return the viewport to the left edge")
+	}
+	if got := viewport.offset.x; got != 0 {
+		t.Errorf("horizontal offset after returning = %d, want 0", got)
+	}
+	if viewport.scroll(tcell.WheelUp, tcell.ModShift) {
+		t.Fatal("Shift+wheel up scrolled beyond the left edge")
+	}
+	if viewport.scroll(tcell.Button1, tcell.ModShift) {
+		t.Fatal("non-wheel button changed the viewport")
+	}
+}
+
+func TestCanvasViewportPreservesWideCharacters(t *testing.T) {
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas.SetContent(testPreviewColumn, testCanvasRow, '界', nil, tcell.StyleDefault)
+	viewport := newCanvasViewport(canvas, testCanvasWidth, testCanvasHeight)
+	screen := newTestScreen(t, testCanvasWidth, testCanvasHeight)
+
+	viewport.render(screen)
+
+	main, _, _, width := screen.GetContent(testPreviewColumn, testCanvasRow)
+	if main != '界' {
+		t.Errorf("rendered wide character = %q, want %q", main, '界')
+	}
+	if width != testWideRuneCellWidth {
+		t.Errorf("rendered wide character width = %d, want %d", width, testWideRuneCellWidth)
+	}
+}
+
 func TestTextEntryBackspaceAtEmptyLineStartReturnsToPreviousLine(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
 	entry := textEntry{previewX: -1, previewY: -1}
-	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
+	if !entry.selectPosition(canvas, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
 		t.Fatal("selectPosition rejected a canvas position")
 	}
 
-	entry.insertRune(screen, 'a', tcell.StyleDefault)
-	entry.startNewLine(screen, tcell.StyleDefault)
-	entry.insertRune(screen, 'b', tcell.StyleDefault)
-	entry.insertRune(screen, 'c', tcell.StyleDefault)
-	entry.backspace(screen, tcell.StyleDefault)
-	entry.backspace(screen, tcell.StyleDefault)
-	entry.backspace(screen, tcell.StyleDefault)
+	entry.insertRune(canvas, 'a', tcell.StyleDefault)
+	entry.startNewLine(canvas, tcell.StyleDefault)
+	entry.insertRune(canvas, 'b', tcell.StyleDefault)
+	entry.insertRune(canvas, 'c', tcell.StyleDefault)
+	entry.backspace(canvas, tcell.StyleDefault)
+	entry.backspace(canvas, tcell.StyleDefault)
+	entry.backspace(canvas, tcell.StyleDefault)
 
 	if got, want := entry.cursorX, testPreviewColumn+testOneCellDelta; got != want {
 		t.Errorf("cursorX after deleting newline = %d, want %d", got, want)
@@ -337,20 +420,20 @@ func TestTextEntryBackspaceAtEmptyLineStartReturnsToPreviousLine(t *testing.T) {
 	if got, want := len(entry.lineEnds), 1; got != want {
 		t.Errorf("tracked line ends = %d, want %d", got, want)
 	}
-	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, 'a')
-	assertScreenRune(t, screen, testPreviewColumn+testOneCellDelta, testCanvasRow, '_')
-	assertScreenRune(t, screen, testPreviewColumn, testNextCanvasRow, ' ')
-	assertScreenRune(t, screen, testPreviewColumn+testOneCellDelta, testNextCanvasRow, ' ')
+	assertScreenRune(t, canvas, testPreviewColumn, testCanvasRow, 'a')
+	assertScreenRune(t, canvas, testPreviewColumn+testOneCellDelta, testCanvasRow, '_')
+	assertScreenRune(t, canvas, testPreviewColumn, testNextCanvasRow, ' ')
+	assertScreenRune(t, canvas, testPreviewColumn+testOneCellDelta, testNextCanvasRow, ' ')
 }
 
 func TestTextEntryBackspaceDoesNotCrossInitialLineStart(t *testing.T) {
-	screen := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
 	entry := textEntry{previewX: -1, previewY: -1}
-	if !entry.selectPosition(screen, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
+	if !entry.selectPosition(canvas, testPreviewColumn, testCanvasRow, tcell.StyleDefault) {
 		t.Fatal("selectPosition rejected a canvas position")
 	}
 
-	entry.backspace(screen, tcell.StyleDefault)
+	entry.backspace(canvas, tcell.StyleDefault)
 
 	if got, want := entry.cursorX, testPreviewColumn; got != want {
 		t.Errorf("cursorX at initial line start = %d, want %d", got, want)
@@ -358,10 +441,15 @@ func TestTextEntryBackspaceDoesNotCrossInitialLineStart(t *testing.T) {
 	if got, want := entry.cursorY, testCanvasRow; got != want {
 		t.Errorf("cursorY at initial line start = %d, want %d", got, want)
 	}
-	assertScreenRune(t, screen, testPreviewColumn, testCanvasRow, '_')
+	assertScreenRune(t, canvas, testPreviewColumn, testCanvasRow, '_')
 }
 
-func newTestCanvas(t *testing.T, width, height int) tcell.Screen {
+func newTestCanvas(t *testing.T, width, height int) *canvasBuffer {
+	t.Helper()
+	return newCanvasBuffer(width, height)
+}
+
+func newTestScreen(t *testing.T, width, height int) tcell.Screen {
 	t.Helper()
 	screen := tcell.NewSimulationScreen("")
 	if err := screen.Init(); err != nil {
@@ -372,7 +460,11 @@ func newTestCanvas(t *testing.T, width, height int) tcell.Screen {
 	return screen
 }
 
-func assertScreenRune(t *testing.T, screen tcell.Screen, x, y int, want rune) {
+type contentReader interface {
+	GetContent(x, y int) (mainc rune, combc []rune, style tcell.Style, width int)
+}
+
+func assertScreenRune(t *testing.T, screen contentReader, x, y int, want rune) {
 	t.Helper()
 	got, _, _, _ := screen.GetContent(x, y)
 	if got != want {

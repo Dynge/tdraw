@@ -25,6 +25,9 @@ some-command | tdraw > draw.txt
 The input is placed at the top of the drawing area. Text beyond the terminal
 size is clipped, and piped input is limited to 1 MiB.
 
+Use the mouse wheel to scroll the canvas vertically, or Shift+wheel to scroll
+horizontally. The headers stay fixed while the canvas moves.
+
 ```
 // tdraw has 4 mode.
 b: Box(+Undirected line, default)

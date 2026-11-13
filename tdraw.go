@@ -21,7 +21,7 @@ const (
 
 	maxInitialInputBytes = 1 << 20
 	maxHistoryEntries    = 100
-	canvasTopRow         = 2
+	canvasTopRow         = 3
 	tabWidth             = 8
 	verticalCellWeight   = 3
 )
@@ -38,10 +38,10 @@ type screenPoint struct {
 }
 
 type headerState struct {
-	pointer     screenPoint
-	mode        string
-	text        textEntry
-	lineArrows  lineArrowMode
+	pointer    screenPoint
+	mode       string
+	text       textEntry
+	lineArrows lineArrowMode
 }
 
 func (mode lineArrowMode) toggled() lineArrowMode {
@@ -65,6 +65,8 @@ Mouse:
   Left-drag       Draw a box, line, or erase an area in box/line/erase mode
   Right-click     Erase the character at the pointer outside text mode
   Text mode       Left-click the canvas to choose where text starts
+  Wheel           Scroll the canvas
+  Shift+wheel     Scroll horizontally
 
 Shortcuts:
   b               Switch to box mode from line or erase mode
@@ -116,6 +118,9 @@ func drawHeader(s tcell.Screen, state headerState) {
 
 	emitStr(s, 1, 0, defStyle, fmt.Sprintf("[%3d,%3d] %s | %s | %s", state.pointer.x, state.pointer.y, state.mode, modeSelectionHint(state.mode), globalHint(state.mode)))
 	emitStr(s, 1, 1, defStyle, contextualHint(state.mode, state.text, state.lineArrows))
+	for col := 0; col < width; col++ {
+		s.SetContent(col, canvasTopRow-1, tcell.RuneHLine, nil, defStyle)
+	}
 }
 
 func modeSelectionHint(mode string) string {
@@ -171,13 +176,6 @@ func readInitialInput(input io.Reader) (string, error) {
 	return string(data), nil
 }
 
-type inputCanvas struct {
-	screen        tcell.Screen
-	width, height int
-	x, y          int
-	lastX, lastY  int
-}
-
 type textEntry struct {
 	cursorSet    bool
 	cursorX      int
@@ -191,30 +189,30 @@ type textEntry struct {
 	previewStyle tcell.Style
 }
 
-func (e *textEntry) beginSelection(screen tcell.Screen, x, y int, style tcell.Style) {
-	e.restorePreview(screen)
+func (e *textEntry) beginSelection(canvas *canvasBuffer, x, y int, style tcell.Style) {
+	e.restorePreview(canvas)
 	e.cursorSet = false
 	e.previewX, e.previewY = -1, -1
-	e.movePreview(screen, x, y, style)
+	e.movePreview(canvas, x, y, style)
 }
 
-func (e *textEntry) movePreview(screen tcell.Screen, x, y int, style tcell.Style) {
-	e.restorePreview(screen)
-	width, height := screen.Size()
+func (e *textEntry) movePreview(canvas *canvasBuffer, x, y int, style tcell.Style) {
+	e.restorePreview(canvas)
+	width, height := canvas.Size()
 	if x < 0 || x >= width || y < canvasTopRow || y >= height {
 		return
 	}
 
-	main, comb, currentStyle, _ := screen.GetContent(x, y)
+	main, comb, currentStyle, _ := canvas.GetContent(x, y)
 	e.preview = canvasCell{main: main, comb: append([]rune(nil), comb...)}
 	e.previewStyle = currentStyle
 	e.previewX, e.previewY = x, y
-	screen.SetContent(x, y, '+', nil, style)
+	canvas.SetContent(x, y, '+', nil, style)
 }
 
-func (e *textEntry) selectPosition(screen tcell.Screen, x, y int, cursorStyle tcell.Style) bool {
-	e.restorePreview(screen)
-	width, height := screen.Size()
+func (e *textEntry) selectPosition(canvas *canvasBuffer, x, y int, cursorStyle tcell.Style) bool {
+	e.restorePreview(canvas)
+	width, height := canvas.Size()
 	if x < 0 || x >= width || y < canvasTopRow || y >= height {
 		return false
 	}
@@ -224,396 +222,65 @@ func (e *textEntry) selectPosition(screen tcell.Screen, x, y int, cursorStyle tc
 	e.startX = x
 	e.startY = y
 	e.lineEnds = []int{x}
-	screen.SetContent(e.cursorX, e.cursorY, '_', nil, cursorStyle)
+	canvas.SetContent(e.cursorX, e.cursorY, '_', nil, cursorStyle)
 	return true
 }
 
-func (e *textEntry) insertRune(screen tcell.Screen, r rune, style tcell.Style) {
+func (e *textEntry) insertRune(canvas *canvasBuffer, r rune, style tcell.Style) {
 	if !e.cursorSet {
 		return
 	}
-	screen.SetContent(e.cursorX, e.cursorY, r, nil, style)
+	canvas.SetContent(e.cursorX, e.cursorY, r, nil, style)
 	e.cursorX += runewidth.RuneWidth(r)
 	e.lineEnds[e.currentLine()] = e.cursorX
-	screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+	canvas.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
 }
 
-func (e *textEntry) startNewLine(screen tcell.Screen, style tcell.Style) {
+func (e *textEntry) startNewLine(canvas *canvasBuffer, style tcell.Style) {
 	if !e.cursorSet {
 		return
 	}
-	screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+	canvas.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
 	e.lineEnds = append(e.lineEnds, e.startX)
 	e.cursorX = e.startX
 	e.cursorY++
 }
 
-func (e *textEntry) backspace(screen tcell.Screen, style tcell.Style) {
+func (e *textEntry) backspace(canvas *canvasBuffer, style tcell.Style) {
 	if !e.cursorSet {
 		return
 	}
 	if e.cursorX > e.startX {
-		screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+		canvas.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
 		e.cursorX--
 		e.lineEnds[e.currentLine()] = e.cursorX
-		screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+		canvas.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
 		return
 	}
 
 	line := e.currentLine()
 	if line == 0 {
-		screen.SetContent(e.cursorX, e.cursorY, '_', nil, style)
+		canvas.SetContent(e.cursorX, e.cursorY, '_', nil, style)
 		return
 	}
 
-	screen.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
+	canvas.SetContent(e.cursorX, e.cursorY, ' ', nil, style)
 	e.cursorY--
 	e.cursorX = e.lineEnds[line-1]
 	e.lineEnds = e.lineEnds[:line]
-	screen.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
+	canvas.SetContent(e.cursorX, e.cursorY, '_', nil, style.Blink(true))
 }
 
 func (e *textEntry) currentLine() int {
 	return e.cursorY - e.startY
 }
 
-func (e *textEntry) restorePreview(screen tcell.Screen) {
+func (e *textEntry) restorePreview(canvas *canvasBuffer) {
 	if e.previewX < 0 || e.previewY < 0 {
 		return
 	}
-	screen.SetContent(e.previewX, e.previewY, e.preview.main, e.preview.comb, e.previewStyle)
+	canvas.SetContent(e.previewX, e.previewY, e.preview.main, e.preview.comb, e.previewStyle)
 	e.previewX, e.previewY = -1, -1
-}
-
-type canvasCell struct {
-	main rune
-	comb []rune
-}
-
-type canvasSnapshot struct {
-	width, height int
-	cells         []canvasCell
-}
-
-type canvasHistory struct {
-	snapshots []canvasSnapshot
-	current   int
-}
-
-func newCanvasHistory(screen tcell.Screen) *canvasHistory {
-	return &canvasHistory{
-		snapshots: []canvasSnapshot{captureCanvas(screen)},
-	}
-}
-
-func captureCanvas(screen tcell.Screen) canvasSnapshot {
-	width, screenHeight := screen.Size()
-	height := screenHeight - canvasTopRow
-	if height < 0 {
-		height = 0
-	}
-	snapshot := canvasSnapshot{
-		width:  width,
-		height: height,
-		cells:  make([]canvasCell, width*height),
-	}
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			main, comb, _, _ := screen.GetContent(x, y+canvasTopRow)
-			snapshot.cells[y*width+x] = canvasCell{
-				main: main,
-				comb: append([]rune(nil), comb...),
-			}
-		}
-	}
-	return snapshot
-}
-
-func (h *canvasHistory) record(screen tcell.Screen) {
-	snapshot := captureCanvas(screen)
-	if canvasSnapshotsEqual(h.snapshots[h.current], snapshot) {
-		return
-	}
-
-	h.snapshots = h.snapshots[:h.current+1]
-	h.snapshots = append(h.snapshots, snapshot)
-	if len(h.snapshots) > maxHistoryEntries+1 {
-		h.snapshots = h.snapshots[1:]
-	}
-	h.current = len(h.snapshots) - 1
-}
-
-func canvasSnapshotsEqual(left, right canvasSnapshot) bool {
-	if left.width != right.width || left.height != right.height {
-		return false
-	}
-	for i := range left.cells {
-		if left.cells[i].main != right.cells[i].main || len(left.cells[i].comb) != len(right.cells[i].comb) {
-			return false
-		}
-		for j := range left.cells[i].comb {
-			if left.cells[i].comb[j] != right.cells[i].comb[j] {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (h *canvasHistory) undo(screen tcell.Screen) {
-	if h.current == 0 {
-		return
-	}
-	h.current--
-	restoreCanvas(screen, h.snapshots[h.current])
-}
-
-func (h *canvasHistory) redo(screen tcell.Screen) {
-	if h.current >= len(h.snapshots)-1 {
-		return
-	}
-	h.current++
-	restoreCanvas(screen, h.snapshots[h.current])
-}
-
-func restoreCanvas(screen tcell.Screen, snapshot canvasSnapshot) {
-	width, screenHeight := screen.Size()
-	height := screenHeight - canvasTopRow
-	if height < 0 {
-		height = 0
-	}
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			cell := canvasCell{main: ' '}
-			if x < snapshot.width && y < snapshot.height {
-				cell = snapshot.cells[y*snapshot.width+x]
-			}
-			screen.SetContent(x, y+canvasTopRow, cell.main, cell.comb, tcell.StyleDefault)
-		}
-	}
-}
-
-func drawInput(s tcell.Screen, input string) {
-	width, height := s.Size()
-	canvas := inputCanvas{
-		screen: s,
-		width:  width,
-		height: height,
-		y:      canvasTopRow,
-		lastX:  -1,
-		lastY:  -1,
-	}
-	for _, r := range input {
-		canvas.drawRune(r)
-	}
-}
-
-func (c *inputCanvas) drawRune(r rune) {
-	switch r {
-	case '\n':
-		c.x = 0
-		c.y++
-		c.lastX, c.lastY = -1, -1
-		return
-	case '\r':
-		return
-	case '\t':
-		c.drawSpaces(tabWidth - c.x%tabWidth)
-		return
-	}
-
-	runeWidth := runewidth.RuneWidth(r)
-	if runeWidth < 0 {
-		return
-	}
-	if runeWidth == 0 {
-		c.drawCombiningRune(r)
-		return
-	}
-	if c.x+runeWidth > c.width {
-		c.x = c.width
-		return
-	}
-
-	if c.y < c.height {
-		c.screen.SetContent(c.x, c.y, r, nil, tcell.StyleDefault)
-		c.lastX, c.lastY = c.x, c.y
-	}
-	c.x += runeWidth
-}
-
-func (c *inputCanvas) drawSpaces(count int) {
-	for i := 0; i < count; i++ {
-		if c.x < c.width && c.y < c.height {
-			c.screen.SetContent(c.x, c.y, ' ', nil, tcell.StyleDefault)
-			c.lastX, c.lastY = c.x, c.y
-		}
-		c.x++
-	}
-}
-
-func (c *inputCanvas) drawCombiningRune(r rune) {
-	if c.lastX < 0 || c.lastY < 0 {
-		return
-	}
-	mainc, combc, style, _ := c.screen.GetContent(c.lastX, c.lastY)
-	c.screen.SetContent(c.lastX, c.lastY, mainc, append(combc, r), style)
-}
-
-func drawLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
-	// do not draw point
-	if start == end {
-		return
-	}
-
-	dx := end.x - start.x
-	if dx < 0 {
-		dx = -dx
-	}
-	dy := end.y - start.y
-	if dy < 0 {
-		dy = -dy
-	}
-	if dx >= verticalCellWeight*dy {
-		end.y = start.y
-	} else {
-		end.x = start.x
-	}
-
-	cross := false
-	if c, _, _, _ := s.GetContent(start.x, start.y); c != ' ' {
-		cross = true
-	}
-
-	if start.x == end.x {
-		drawVerticalLine(s, start, end, arrowMode)
-	} else {
-		drawHorizontalLine(s, start, end, arrowMode)
-	}
-
-	if cross {
-		s.SetContent(start.x, start.y, '+', nil, tcell.StyleDefault)
-	}
-}
-
-func drawVerticalLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
-	lineEnd := '|'
-	if arrowMode == lineArrowheadsOn {
-		if start.y < end.y {
-			lineEnd = 'v'
-		} else {
-			lineEnd = '^'
-		}
-	}
-
-	firstRow, lastRow := start.y, end.y
-	if lastRow < firstRow {
-		firstRow, lastRow = lastRow, firstRow
-	}
-	for row := firstRow; row <= lastRow; row++ {
-		s.SetContent(start.x, row, '|', nil, tcell.StyleDefault)
-	}
-	s.SetContent(end.x, end.y, lineEnd, nil, tcell.StyleDefault)
-}
-
-func drawHorizontalLine(s tcell.Screen, start, end screenPoint, arrowMode lineArrowMode) {
-	lineEnd := '-'
-	if arrowMode == lineArrowheadsOn {
-		if start.x < end.x {
-			lineEnd = '>'
-		} else {
-			lineEnd = '<'
-		}
-	}
-
-	firstColumn, lastColumn := start.x, end.x
-	if lastColumn < firstColumn {
-		firstColumn, lastColumn = lastColumn, firstColumn
-	}
-	for col := firstColumn; col <= lastColumn; col++ {
-		s.SetContent(col, start.y, '-', nil, tcell.StyleDefault)
-	}
-	s.SetContent(end.x, end.y, lineEnd, nil, tcell.StyleDefault)
-}
-
-func drawErase(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
-	if y2 < y1 {
-		y1, y2 = y2, y1
-	}
-	if x2 < x1 {
-		x1, x2 = x2, x1
-	}
-
-	for col := x1; col <= x2; col++ {
-		for row := y1; row <= y2; row++ {
-			s.SetContent(col, row, ' ', nil, tcell.StyleDefault)
-		}
-	}
-}
-
-func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
-	if y2 < y1 {
-		y1, y2 = y2, y1
-	}
-	if x2 < x1 {
-		x1, x2 = x2, x1
-	}
-
-	// do not draw point
-	if x1 == x2 && y1 == y2 {
-		return
-	}
-
-	for col := x1 + 1; col < x2; col++ {
-		// RuneHLine    = '─'
-		s.SetContent(col, y1, tcell.RuneHLine, nil, tcell.StyleDefault)
-		s.SetContent(col, y2, tcell.RuneHLine, nil, tcell.StyleDefault)
-	}
-	for row := y1 + 1; row < y2; row++ {
-		// RuneVLine    = '│'
-		s.SetContent(x1, row, tcell.RuneVLine, nil, tcell.StyleDefault)
-		s.SetContent(x2, row, tcell.RuneVLine, nil, tcell.StyleDefault)
-	}
-
-	if y1 == y2 {
-		s.SetContent(x1, y1, tcell.RuneHLine, nil, tcell.StyleDefault)
-		s.SetContent(x2, y2, tcell.RuneHLine, nil, tcell.StyleDefault)
-		return
-	}
-
-	if x1 == x2 {
-		s.SetContent(x1, y1, tcell.RuneVLine, nil, tcell.StyleDefault)
-		s.SetContent(x2, y2, tcell.RuneVLine, nil, tcell.StyleDefault)
-		return
-	}
-
-	if y1 != y2 && x1 != x2 {
-		// Only add corners if we need to
-		s.SetContent(x1, y1, tcell.RuneULCorner, nil, tcell.StyleDefault)
-		s.SetContent(x2, y1, tcell.RuneURCorner, nil, tcell.StyleDefault)
-		s.SetContent(x1, y2, tcell.RuneLLCorner, nil, tcell.StyleDefault)
-		s.SetContent(x2, y2, tcell.RuneLRCorner, nil, tcell.StyleDefault)
-	}
-}
-
-func drawSelect(s tcell.Screen, x1, y1, x2, y2 int, sel bool) {
-	if y2 < y1 {
-		y1, y2 = y2, y1
-	}
-	if x2 < x1 {
-		x1, x2 = x2, x1
-	}
-	for row := y1; row <= y2; row++ {
-		for col := x1; col <= x2; col++ {
-			mainc, combc, style, width := s.GetContent(col, row)
-			if style == tcell.StyleDefault {
-				style = defStyle
-			}
-			style = style.Reverse(sel)
-			s.SetContent(col, row, mainc, combc, style)
-			col += width - 1
-		}
-	}
 }
 
 func main() {
@@ -655,16 +322,17 @@ func main() {
 
 	s.EnableMouse()
 	s.Clear()
-	drawInput(s, initialInput)
-	history := newCanvasHistory(s)
+	screenWidth, screenHeight := s.Size()
+	canvas := newCanvasBuffer(screenWidth, screenHeight)
+	drawInput(canvas, initialInput)
+	viewport := newCanvasViewport(canvas, screenWidth, screenHeight)
+	history := newCanvasHistory(canvas)
 
 	// mouse
 	mx, my := -1, -1
 	ox, oy := -1, -1
 	bx, by := -1, -1
 	// w, h := s.Size()
-	lchar := '*'
-
 	mode := MODE_BOX
 	lineArrows := lineArrowheadsOn
 	text := textEntry{previewX: -1, previewY: -1}
@@ -679,34 +347,34 @@ loop:
 			text:       text,
 			lineArrows: lineArrows,
 		})
+		viewport.render(s)
+		if ox >= 0 && oy >= 0 && bx >= 0 && by >= 0 {
+			viewport.drawSelection(s, screenPoint{x: ox, y: oy}, screenPoint{x: bx, y: by})
+		}
 
 		s.Show()
 		ev := s.PollEvent()
 		st := tcell.StyleDefault
-		up := tcell.StyleDefault.
-			Background(tcell.ColorBlue).
-			Foreground(tcell.ColorBlack)
 		// w, h = s.Size()
-
-		// always clear any old selection box
-		if ox >= 0 && oy >= 0 && bx >= 0 {
-			drawSelect(s, ox, oy, bx, by, false)
-		}
 
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
 			s.Sync()
+			screenWidth, screenHeight := s.Size()
+			viewport.resize(screenWidth, screenHeight)
 		case *tcell.EventKey:
 			if ev.Key() == tcell.KeyCtrlC || ev.Key() == tcell.KeyCtrlD {
 				s.Sync()
-				sizeX, sizeY := s.Size()
-				arr := make([]string, sizeY)
+				_, canvasHeight := canvas.Size()
+				arr := make([]string, canvasHeight-canvasTopRow)
 
-				for y := 2; y < sizeY; y++ {
-					for x := 0; x < sizeX; x++ {
-						c, _, _, _ := s.GetContent(x, y)
-						arr[y] = arr[y] + string(c)
+				for y := canvasTopRow; y < canvasHeight; y++ {
+					var line strings.Builder
+					for x := 0; x < canvas.width; x++ {
+						c, _, _, _ := canvas.GetContent(x, y)
+						line.WriteRune(c)
 					}
+					arr[y-canvasTopRow] = line.String()
 				}
 				{
 					n := 0
@@ -742,11 +410,11 @@ loop:
 			if mode != MODE_TEXT && ev.Key() == tcell.KeyRune {
 				switch ev.Rune() {
 				case 'u':
-					history.undo(s)
+					history.undo(canvas)
 					ox, oy, bx, by = -1, -1, -1, -1
 					continue
 				case 'r':
-					history.redo(s)
+					history.redo(canvas)
 					ox, oy, bx, by = -1, -1, -1, -1
 					continue
 				}
@@ -759,7 +427,7 @@ loop:
 					switch ev.Rune() {
 					case 't':
 						mode = MODE_TEXT
-						text.beginSelection(s, mx, my, st)
+						text.beginSelection(canvas, mx, my, st)
 					case 'e':
 						mode = MODE_ERASE
 					case 'l':
@@ -779,7 +447,7 @@ loop:
 						mode = MODE_LINE
 					case 't', 'i':
 						mode = MODE_TEXT
-						text.beginSelection(s, mx, my, st)
+						text.beginSelection(canvas, mx, my, st)
 					}
 				}
 
@@ -793,7 +461,7 @@ loop:
 						mode = MODE_ERASE
 					case 't', 'i':
 						mode = MODE_TEXT
-						text.beginSelection(s, mx, my, st)
+						text.beginSelection(canvas, mx, my, st)
 					case 'a':
 						lineArrows = lineArrows.toggled()
 					}
@@ -803,32 +471,43 @@ loop:
 				switch ev.Key() {
 				case tcell.KeyEscape:
 					mode = MODE_BOX
-					text.restorePreview(s)
+					text.restorePreview(canvas)
 					if text.cursorSet {
-						s.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
+						canvas.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
 					}
-					history.record(s)
+					history.record(canvas)
 				case tcell.KeyEnter:
 					if !text.cursorSet {
 						continue
 					}
-					text.startNewLine(s, st)
+					text.startNewLine(canvas, st)
 				case tcell.KeyDEL:
 					if !text.cursorSet {
 						continue
 					}
-					text.backspace(s, st)
+					text.backspace(canvas, st)
 				default:
 					if !text.cursorSet {
 						continue
 					}
-					text.insertRune(s, ev.Rune(), st)
+					text.insertRune(canvas, ev.Rune(), st)
 				}
 			}
 		case *tcell.EventMouse:
-			x, y := ev.Position()
-			mx, my = x, y
+			screenX, screenY := ev.Position()
 			button := ev.Buttons()
+			if button == tcell.WheelUp || button == tcell.WheelDown {
+				if screenY >= canvasTopRow {
+					viewport.scroll(button, ev.Modifiers())
+				}
+				continue
+			}
+			point, insideCanvas := viewport.toCanvas(screenX, screenY)
+			if !insideCanvas {
+				continue
+			}
+			x, y := point.x, point.y
+			mx, my = x, y
 
 			if mode != MODE_TEXT && button != tcell.ButtonNone && ox < 0 {
 				ox, oy = x, y
@@ -840,77 +519,60 @@ loop:
 				switch ev.Buttons() {
 				case tcell.ButtonNone:
 					if ox >= 0 {
-						bg := tcell.Color((lchar - '0') * 2)
-						drawErase(s, ox, oy, x, y, up.Background(bg), lchar)
-						history.record(s)
+						drawErase(canvas, ox, oy, x, y)
+						history.record(canvas)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
 				case tcell.Button1:
-					ch := ' '
 					bx, by = x, y
-					lchar = rune(ch)
-					if ox >= 0 && bx >= 0 {
-						drawSelect(s, ox, oy, bx, by, true)
-					}
 				case tcell.Button3:
 					ox, oy = -1, -1
 					bx, by = -1, -1
-					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-					history.record(s)
+					canvas.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(canvas)
 				}
 
 			case MODE_BOX:
 				switch ev.Buttons() {
 				case tcell.ButtonNone:
 					if ox >= 0 {
-						bg := tcell.Color((lchar - '0') * 2)
-						drawBox(s, ox, oy, x, y, up.Background(bg), lchar)
-						history.record(s)
+						drawBox(canvas, ox, oy, x, y)
+						history.record(canvas)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
 				case tcell.Button1:
-					ch := ' '
 					bx, by = x, y
-					lchar = rune(ch)
-					if ox >= 0 && bx >= 0 {
-						drawSelect(s, ox, oy, bx, by, true)
-					}
 				case tcell.Button3:
 					ox, oy = -1, -1
 					bx, by = -1, -1
-					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-					history.record(s)
+					canvas.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(canvas)
 				}
 			case MODE_LINE:
 				switch ev.Buttons() {
 				case tcell.ButtonNone:
 					if ox >= 0 {
-						drawLine(s, screenPoint{x: ox, y: oy}, screenPoint{x: x, y: y}, lineArrows)
-						history.record(s)
+						drawLine(canvas, screenPoint{x: ox, y: oy}, screenPoint{x: x, y: y}, lineArrows)
+						history.record(canvas)
 						ox, oy = -1, -1
 						bx, by = -1, -1
 					}
 				case tcell.Button1:
-					ch := ' '
 					bx, by = x, y
-					lchar = rune(ch)
-					if ox >= 0 && bx >= 0 {
-						drawSelect(s, ox, oy, bx, by, true)
-					}
 				case tcell.Button3:
 					ox, oy = -1, -1
 					bx, by = -1, -1
-					s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-					history.record(s)
+					canvas.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+					history.record(canvas)
 				}
 			case MODE_TEXT:
 				if !text.cursorSet {
 					if ev.Buttons() == tcell.Button1 {
-						text.selectPosition(s, x, y, st.Blink(true))
+						text.selectPosition(canvas, x, y, st.Blink(true))
 					} else {
-						text.movePreview(s, x, y, st)
+						text.movePreview(canvas, x, y, st)
 					}
 				}
 			}

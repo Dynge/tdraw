@@ -15,12 +15,12 @@ func TestDrawLineFollowsDominantAxis(t *testing.T) {
 	}{
 		{
 			name:           "horizontal movement is larger",
-			start:          screenPoint{x: testLineOrigin, y: testLineOrigin},
-			target:         screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineOrigin + verticalCellWeight},
+			start:          screenPoint{x: testLineOrigin, y: testLineRow},
+			target:         screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineRow + verticalCellWeight},
 			startRune:      '-',
-			drawnEnd:       screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineOrigin},
+			drawnEnd:       screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineRow},
 			endRune:        '>',
-			unsnappedPoint: screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineOrigin + verticalCellWeight},
+			unsnappedPoint: screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineRow + verticalCellWeight},
 		},
 		{
 			name:           "vertical movement is larger",
@@ -42,30 +42,30 @@ func TestDrawLineFollowsDominantAxis(t *testing.T) {
 		},
 		{
 			name:           "equal cell movement weighs vertical three times",
-			start:          screenPoint{x: testLineOrigin, y: testLineOrigin},
-			target:         screenPoint{x: testLineOrigin + testEqualLineDelta, y: testLineOrigin + testEqualLineDelta},
+			start:          screenPoint{x: testLineOrigin, y: testLineRow},
+			target:         screenPoint{x: testLineOrigin + testEqualLineDelta, y: testLineRow + testEqualLineDelta},
 			startRune:      '|',
-			drawnEnd:       screenPoint{x: testLineOrigin, y: testLineOrigin + testEqualLineDelta},
+			drawnEnd:       screenPoint{x: testLineOrigin, y: testLineRow + testEqualLineDelta},
 			endRune:        'v',
-			unsnappedPoint: screenPoint{x: testLineOrigin + testEqualLineDelta, y: testLineOrigin + testEqualLineDelta},
+			unsnappedPoint: screenPoint{x: testLineOrigin + testEqualLineDelta, y: testLineRow + testEqualLineDelta},
 		},
 		{
 			name:           "three horizontal cells equal one vertical cell",
-			start:          screenPoint{x: testLineOrigin, y: testLineOrigin},
-			target:         screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineOrigin + testOneCellDelta},
+			start:          screenPoint{x: testLineOrigin, y: testLineRow},
+			target:         screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineRow + testOneCellDelta},
 			startRune:      '-',
-			drawnEnd:       screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineOrigin},
+			drawnEnd:       screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineRow},
 			endRune:        '>',
-			unsnappedPoint: screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineOrigin + testOneCellDelta},
+			unsnappedPoint: screenPoint{x: testLineOrigin + verticalCellWeight, y: testLineRow + testOneCellDelta},
 		},
 		{
 			name:           "vertical weighting wins below three horizontal cells",
-			start:          screenPoint{x: testLineOrigin, y: testLineOrigin},
-			target:         screenPoint{x: testLineOrigin + verticalCellWeight - testOneCellDelta, y: testLineOrigin + testOneCellDelta},
+			start:          screenPoint{x: testLineOrigin, y: testLineRow},
+			target:         screenPoint{x: testLineOrigin + verticalCellWeight - testOneCellDelta, y: testLineRow + testOneCellDelta},
 			startRune:      '|',
-			drawnEnd:       screenPoint{x: testLineOrigin, y: testLineOrigin + testOneCellDelta},
+			drawnEnd:       screenPoint{x: testLineOrigin, y: testLineRow + testOneCellDelta},
 			endRune:        'v',
-			unsnappedPoint: screenPoint{x: testLineOrigin + verticalCellWeight - testOneCellDelta, y: testLineOrigin + testOneCellDelta},
+			unsnappedPoint: screenPoint{x: testLineOrigin + verticalCellWeight - testOneCellDelta, y: testLineRow + testOneCellDelta},
 		},
 	}
 
@@ -89,14 +89,14 @@ func TestDrawLineWithoutArrowheads(t *testing.T) {
 	}{
 		{
 			name:     "horizontal line",
-			start:    screenPoint{x: testLineOrigin, y: testLineOrigin},
-			end:      screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineOrigin},
+			start:    screenPoint{x: testLineOrigin, y: testLineRow},
+			end:      screenPoint{x: testLineOrigin + testHorizontalLineDelta, y: testLineRow},
 			lineRune: '-',
 		},
 		{
 			name:     "vertical line",
-			start:    screenPoint{x: testLineOrigin, y: testLineOrigin},
-			end:      screenPoint{x: testLineOrigin, y: testLineOrigin + testEqualLineDelta},
+			start:    screenPoint{x: testLineOrigin, y: testLineRow},
+			end:      screenPoint{x: testLineOrigin, y: testLineRow + testEqualLineDelta},
 			lineRune: '|',
 		},
 	}
