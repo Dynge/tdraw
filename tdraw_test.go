@@ -77,6 +77,7 @@ func TestPrintHelpIfRequested(t *testing.T) {
 		"Esc             Finish text entry",
 		"Left-click the canvas to choose where text starts",
 		"Backspace       Delete a character or join with the previous line",
+		"Ctrl+V          Paste clipboard text at the top-left of the canvas",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output does not contain %q", want)
@@ -86,6 +87,50 @@ func TestPrintHelpIfRequested(t *testing.T) {
 	if strings.Contains(output.String(), "Esc             Return to box mode") {
 		t.Error("help output still describes Escape as the box-mode shortcut")
 	}
+}
+
+func TestPreparePastedInputTrimsTrailingSpacesOnEachLine(t *testing.T) {
+	input, err := preparePastedInput("    input      \r\n  next row  \n")
+	if err != nil {
+		t.Fatalf("preparePastedInput returned an error: %v", err)
+	}
+	if want := "    input\n  next row\n"; input != want {
+		t.Errorf("prepared clipboard input = %q, want %q", input, want)
+	}
+}
+
+func TestPreparePastedInputRejectsOversizedClipboard(t *testing.T) {
+	input := strings.Repeat("x", maxPasteInputBytes+1)
+	if _, err := preparePastedInput(input); err == nil {
+		t.Fatal("preparePastedInput accepted oversized clipboard text")
+	}
+}
+
+func TestDrawPastedInputStartsAtCanvasTopLeftAndCanBeUndone(t *testing.T) {
+	canvas := newTestCanvas(t, testCanvasWidth, testCanvasHeight)
+	canvas.SetContent(0, testCanvasRow, 'x', nil, tcell.StyleDefault)
+	canvas.SetContent(1, testCanvasRow, 'y', nil, tcell.StyleDefault)
+	history := newCanvasHistory(canvas)
+	input, err := preparePastedInput("ab\ncd")
+	if err != nil {
+		t.Fatalf("preparePastedInput returned an error: %v", err)
+	}
+
+	drawPastedInput(canvas, history, input)
+
+	assertScreenRune(t, canvas, 0, testCanvasRow, 'a')
+	assertScreenRune(t, canvas, 1, testCanvasRow, 'b')
+	assertScreenRune(t, canvas, 0, testNextCanvasRow, 'c')
+	assertScreenRune(t, canvas, 1, testNextCanvasRow, 'd')
+
+	history.undo(canvas)
+	assertScreenRune(t, canvas, 0, testCanvasRow, 'x')
+	assertScreenRune(t, canvas, 1, testCanvasRow, 'y')
+	assertScreenRune(t, canvas, 0, testNextCanvasRow, ' ')
+
+	history.redo(canvas)
+	assertScreenRune(t, canvas, 0, testCanvasRow, 'a')
+	assertScreenRune(t, canvas, 0, testNextCanvasRow, 'c')
 }
 
 func TestPrintHelpIfNotRequested(t *testing.T) {

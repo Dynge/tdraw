@@ -3,6 +3,7 @@ module github.com/Dynge/tdraw
 go 1.14
 
 require (
+	github.com/atotto/clipboard v0.1.4
 	github.com/gdamore/tcell v1.3.0
 	github.com/mattn/go-runewidth v0.0.9
 )

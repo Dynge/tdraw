@@ -1,9 +1,34 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/gdamore/tcell"
 	"github.com/mattn/go-runewidth"
 )
+
+const maxPasteInputBytes = 1 << 20
+
+func preparePastedInput(input string) (string, error) {
+	if len(input) > maxPasteInputBytes {
+		return "", fmt.Errorf("clipboard text exceeds %d bytes", maxPasteInputBytes)
+	}
+
+	lines := strings.Split(input, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t\r")
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func drawPastedInput(canvas *canvasBuffer, history *canvasHistory, input string) {
+	if input == "" {
+		return
+	}
+	drawInput(canvas, input)
+	history.record(canvas)
+}
 
 type inputCanvas struct {
 	canvas        *canvasBuffer

@@ -28,6 +28,11 @@ size is clipped, and piped input is limited to 1 MiB.
 Use the mouse wheel to scroll the canvas vertically, or Shift+wheel to scroll
 horizontally. The headers stay fixed while the canvas moves.
 
+Press Ctrl+V to paste clipboard text at the top-left of the canvas. Pasted rows
+are clipped to the canvas width and trailing spaces are removed; leading spaces
+are preserved. Paste is undoable with `u`. On Linux, `wl-clipboard`, `xclip`, or
+`xsel` must be installed.
+
 ```
 // tdraw has 5 modes.
 b: Box(+Undirected line, default)
@@ -40,6 +45,7 @@ f: Freehand (type a printable ASCII character to select the brush; click or drag
 ESC: Exit freehand mode
 u: Undo the last completed drawing, erase, freehand stroke, or text-entry session
 r: Redo
+CTRL-V: Paste clipboard text at the top-left of the canvas
 
 CTRL-C/CTRL-D: exit
 

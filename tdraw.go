@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell"
 	"github.com/gdamore/tcell/encoding"
 
@@ -81,6 +82,7 @@ Shortcuts:
   f               Enter freehand mode; type a printable ASCII character to select it
   i               Enter text mode from line or erase mode
   u / r           Undo / redo (outside text and freehand modes)
+  Ctrl+V          Paste clipboard text at the top-left of the canvas
   Enter           Start a new line in text mode
   Backspace       Delete a character or join with the previous line
   Ctrl+C / Ctrl+D Save the drawing to stdout and exit
@@ -440,6 +442,38 @@ loop:
 					fmt.Println(arr[y])
 				}
 				break loop
+			}
+
+			if ev.Key() == tcell.KeyCtrlV {
+				input, err := clipboard.ReadAll()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "paste from clipboard: %v\n", err)
+					continue
+				}
+				input, err = preparePastedInput(input)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "paste from clipboard: %v\n", err)
+					continue
+				}
+				if input == "" {
+					continue
+				}
+
+				text.restorePreview(canvas)
+				if text.cursorSet {
+					canvas.SetContent(text.cursorX, text.cursorY, ' ', nil, st)
+					history.record(canvas)
+				}
+				if mode == MODE_FREEHAND {
+					history.record(canvas)
+				}
+				text = textEntry{previewX: -1, previewY: -1}
+				mode = MODE_BOX
+				ox, oy, bx, by = -1, -1, -1, -1
+				drawPastedInput(canvas, history, input)
+				viewport.offset = screenPoint{}
+				viewport.ensureVisible()
+				continue
 			}
 
 			if mode != MODE_TEXT && mode != MODE_FREEHAND && ev.Key() == tcell.KeyRune {
