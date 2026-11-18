@@ -1,4 +1,4 @@
-module github.com/aca/tdraw
+module github.com/Dynge/tdraw
 
 go 1.14
 

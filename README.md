@@ -7,9 +7,9 @@ Supports box / line drawing, text input, freehand character drawing and erasing.
 
 #### Install
 ```
-go get -u github.com/aca/tdraw
+go install github.com/Dynge/tdraw@latest
 ```
-or download from https://github.com/aca/tdraw/releases
+or download from https://github.com/Dynge/tdraw/releases
 
 #### Usage
 ```
